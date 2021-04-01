@@ -75,15 +75,15 @@ pub enum VeracruzServerError {
     #[cfg(feature = "sgx")]
     #[error(display = "VeracruzServer: SGXError: {:?}.", _0)]
     SGXError(sgx_types::sgx_status_t),
-    #[cfg(feature = "nitro")]
+    #[cfg(any(feature = "linux", feature = "nitro"))]
     #[error(display = "VeracruzServer: BincodeError: {:?}", _0)]
     BincodeError(bincode::ErrorKind),
     #[cfg(feature = "nitro")]
     #[error(display = "VeracruzServer: RuntimeManagerMessage::Status: {:?}", _0)]
-    RuntimeManagerMessageStatus(veracruz_utils::platform::nitro::nitro::RuntimeManagerMessage),
-    #[cfg(feature = "nitro")]
-    #[error(display = "VeracruzServer: NitroStatus: {:?}", _0)]
-    NitroStatus(veracruz_utils::platform::nitro::nitro::NitroStatus),
+    RuntimeManagerMessageStatus(veracruz_utils::RuntimeManagerMessage),
+    #[cfg(any(feature = "nitro", feature = "linux"))]
+    #[error(display = "VeracruzServer: VMStatus: {:?}", _0)]
+    VMStatus(veracruz_utils::VMStatus),
     #[cfg(feature = "nitro")]
     #[error(display = "VeracruzServer: Received Invalid Runtime Manager Message: {:?}", _0)]
     InvalidRuntimeManagerMessage(veracruz_utils::platform::nitro::nitro::RuntimeManagerMessage),

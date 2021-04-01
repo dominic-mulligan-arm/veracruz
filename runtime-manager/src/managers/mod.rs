@@ -16,6 +16,7 @@ use sgx_types::sgx_status_t;
 use std::sync::Mutex;
 #[cfg(feature = "sgx")]
 use std::{ffi::CString};
+
 use std::{
     collections::HashMap,
     string::String,
@@ -33,6 +34,7 @@ use veracruz_utils::policy::{
 };
 use wasi_types::ErrNo;
 
+pub mod buffer;
 pub mod error;
 pub mod execution_engine_manager;
 pub mod session_manager;

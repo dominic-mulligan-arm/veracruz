@@ -14,17 +14,17 @@ use super::{ProtocolState, ProvisioningResult, RuntimeManagerError, OUTPUT_FILE}
 use lazy_static::lazy_static;
 use std::sync::Mutex;
 use std::{collections::HashMap, result::Result, vec::Vec};
+use veracruz_utils::policy::principal::Role;
 use transport_protocol::transport_protocol::{
     RuntimeManagerRequest as REQUEST, RuntimeManagerRequest_oneof_message_oneof as MESSAGE,
 };
-use veracruz_utils::policy::principal::Principal;
 
 ////////////////////////////////////////////////////////////////////////////////
 // The buffer of incoming data.
 ////////////////////////////////////////////////////////////////////////////////
 
 lazy_static! {
-    //TODO, wrap into a chihuahua management object.
+    // TODO: wrap into a runtime manager management object.
     static ref INCOMING_BUFFER_HASH: Mutex<HashMap<u32, Vec<u8>>> = Mutex::new(HashMap::new());
 }
 
@@ -49,6 +49,16 @@ fn response_not_ready() -> super::ProvisioningResult {
         None,
     )?;
     Ok(Some(rst))
+}
+
+/// Encodes an error code indicating that a principal with an invalid role tried
+/// to perform an action.
+fn response_invalid_role() -> super::ProvisioningResult {
+    let rst = transport_protocol::serialize_result(
+        transport_protocol::ResponseStatus::FAILED_INVALID_ROLE as i32,
+        None,
+    )?;
+    Ok(super::ProvisioningResponse::ProtocolError { response: rst })
 }
 
 /// Encodes an error code indicating that somebody sent an invalid or malformed
@@ -144,6 +154,31 @@ fn dispatch_on_stream(
         None,
     )?;
     Ok(Some(response))
+}
+
+/// Signals the next round of computation. It will reload the program and all (static) data,
+/// and load the current result as the `previous_result` for the next round.
+/// Fails if the enclave is not in `LifecycleState::FinishedExecuting`.
+fn dispatch_on_next_round(
+    protocol_state: &mut ProtocolState,
+) -> (Option<ProtocolState>, ProvisioningResult) {
+    let lifecycle_state = match protocol_state.get_lifecycle_state() {
+        Ok(o) => o,
+        Err(e) => return (None, Err(e)),
+    };
+    if check_state(&lifecycle_state, &[LifecycleState::FinishedExecuting]) {
+        match reload(protocol_state) {
+            Ok(o) => (
+                Some(o),
+                Ok(ProvisioningResponse::Success {
+                    response: response_success(None),
+                }),
+            ),
+            Err(e) => (None, Err(e)),
+        }
+    } else {
+        (None, response_not_ready())
+    }
 }
 
 /// Signals the next round of computation.

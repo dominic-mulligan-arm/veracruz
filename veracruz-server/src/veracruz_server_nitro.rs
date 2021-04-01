@@ -1,6 +1,6 @@
 //! Nitro-Enclave-specific material for the Veracruz server
 //!
-//! ## Authors
+//! ## Authors
 //!
 //! The Veracruz Development Team.
 //!

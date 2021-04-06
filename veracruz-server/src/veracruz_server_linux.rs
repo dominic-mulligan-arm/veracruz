@@ -9,6 +9,8 @@
 //! See the `LICENSE.markdown` file in the Veracruz root directory for
 //! information on licensing and copyright.
 
+use crate::{VeracruzServerLinux, VeracruzServer};
+
 #[cfg(feature = "linux")]
 pub mod veracruz_server_linux {
 
@@ -18,6 +20,7 @@ pub mod veracruz_server_linux {
     use std::{process::{Command, Child}, io::Write, net::TcpStream, thread::sleep, time::Duration};
     use veracruz_utils::{VeracruzPolicy, RuntimeManagerMessage, send_buffer, receive_buffer, VMStatus};
     use bincode::{serialize, deserialize};
+    use std::net::Shutdown;
 
     const RUNTIME_MANAGER_PATH: &'static str = "../runtime-manager/target/release/runtime_manager_enclave";
     const RUNTIME_MANAGER_PORT: &'static str = "5022";
@@ -285,12 +288,12 @@ pub mod veracruz_server_linux {
                     Ok(())
                 },
                 RuntimeManagerMessage::Status(status) => {
-                    info!("TLS session close request resulted in unexpected status message.  Received: {:?}.", status);
-                    VeracruzServerError::NitroStatus(status)
+                    error!("TLS session close request resulted in unexpected status message.  Received: {:?}.", status);
+                    Err(VeracruzServerError::NitroStatus(status))
                 },
                 otherwise => {
                     error!("Unexpected response returned from enclave.  Received: {:?}.", otherwise);
-                    VeracruzServerError::InvalidRuntimeManagerMessage(otherwise)
+                    Err(VeracruzServerError::InvalidRuntimeManagerMessage(otherwise))
                 }
             }
         }
@@ -302,7 +305,7 @@ pub mod veracruz_server_linux {
         fn close(&mut self) -> Result<bool, VeracruzServerError> {
             info!("Requesting shutdown of enclave.");
 
-            let message = serialize(&RuntimeManagerMessage::).map_err(|e| {
+            let message = serialize(&RuntimeManagerMessage::ResetEnclave).map_err(|e| {
                 error!("Failed to serialize TLS session close request message.  Error produced: {:?}.", e);
                 VeracruzServerError::BincodeError(*e)
             })?;
@@ -321,7 +324,46 @@ pub mod veracruz_server_linux {
                 error!("Failed to deserialize response to TLS session close request message.  Error produced: {:?}.", e);
                 VeracruzServerError::BincodeError(*e)
             })?;
+
+            match message {
+                RuntimeManagerMessage::Status(VMStatus::Success) => {
+                    if let Err(e) = self.socket.shutdown(Shutdown::Both) {
+                        error!("Failed to shutdown socket.  Error produced: {:?}.", e);
+                        return Err(VeracruzServerError::IOError(e));
+                    }
+
+                    if let Err(e) = self.child_process.kill() {
+                        error!("Failed to kill runtime enclave process.  Error produced: {:?}.", e);
+                        return Err(VeracruzServerError::IOError(e));
+                    }
+
+                    Ok(true)
+                },
+                RuntimeManagerMessage::Status(otherwise) => {
+                    error!("Shutdown request resulted in unexpected status message.  Received: {:?}.", otherwise);
+                    Err(VeracruzServerError::VMStatus(otherwise))
+                }
+                otherwise => {
+                    error!("Shutdown request resulted in unexpected response from enclave.  Received: {:?}.", otherwise);
+                    Err(VeracruzServerError::InvalidRuntimeManagerMessage(otherwise))
+                }
+            }
         }
     }
+}
 
+////////////////////////////////////////////////////////////////////////////////
+// Trait implementations.
+////////////////////////////////////////////////////////////////////////////////
+
+/// An implementation of the `Drop` trait that forcibly kills the runtime
+/// manager enclave, and closes the socket used for communicating with it, when
+/// a `VeracruzServerLinux` struct is about to go out of scope.
+impl Drop for VeracruzServerLinux {
+    #[inline]
+    fn drop(&mut self) {
+        if let Err(error) = self.close() {
+            error!("Failed to forcibly kill runtime enclave process.  Error produced: {:?}.", error);
+        }
+    }
 }

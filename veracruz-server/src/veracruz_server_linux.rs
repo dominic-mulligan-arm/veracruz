@@ -31,11 +31,17 @@ pub mod veracruz_server_linux {
         receive_buffer, send_buffer, RuntimeManagerMessage, VMStatus, VeracruzPolicy,
     };
 
+    /// Path to the pre-built Runtime Manager enclave.
     const RUNTIME_MANAGER_PATH: &'static str =
         "../runtime-manager/target/release/runtime_manager_enclave";
+    /// Port to communicate with the Runtime Manager enclave on.
     const RUNTIME_MANAGER_PORT: &'static str = "5022";
+    /// IP address to use when communicating with the Runtime Manager enclave.
     const RUNTIME_MANAGER_ADDRESS: &'static str = "127.0.0.1";
-    const RUNTIME_MANAGER_SPAWN_DELAY_SECONDS: u64 = 3;
+    /// Delay (in seconds) to use when spawning the Runtime Manager enclave to
+    /// ensure that everything is started before proceeding with communication
+    /// between the server and enclave.
+    const RUNTIME_MANAGER_SPAWN_DELAY_SECONDS: u64 = 1;
 
     /// A struct capturing all the metadata needed to start and communicate with
     /// the Runtime Manager Enclave.

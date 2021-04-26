@@ -34,7 +34,6 @@ use veracruz_utils::policy::{
 };
 use wasi_types::ErrNo;
 
-pub mod buffer;
 pub mod error;
 pub mod execution_engine_manager;
 pub mod session_manager;

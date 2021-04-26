@@ -12,9 +12,9 @@
 use bincode::{deserialize, serialize};
 use log::{error, info};
 use nix::sys::socket::{setsockopt, sockopt};
-use std::{io::Error as IOError, net::TcpListener, os::unix::io::AsRawFd};
+use std::{net::TcpListener, os::unix::io::AsRawFd};
 
-use veracruz_utils::{receive_buffer, send_buffer, RuntimeManagerMessage, VMStatus};
+use veracruz_utils::platform::{linux::{receive_buffer, send_buffer}, vm::{RuntimeManagerMessage, VMStatus}};
 
 use crate::managers::{session_manager, RuntimeManagerError};
 
@@ -159,7 +159,7 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
             RuntimeManagerMessage::SendTLSData(session_id, tls_data) => {
                 info!("Sending TLS data.");
 
-                session_manager::send_data(session_id, tls_data)
+                session_manager::send_data(session_id, &tls_data)
                     .map(|_| RuntimeManagerMessage::Status(VMStatus::Success))
                     .unwrap_or_else(|e| {
                         error!("Failed to send TLS data.  Error produced: {:?}.", e);
@@ -172,7 +172,7 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
 
                 RuntimeManagerMessage::Status(VMStatus::Success)
             }
-            _otherwise => {
+            otherwise => {
                 error!("Received unknown or unimplemented opcode: {:?}.", otherwise);
                 RuntimeManagerMessage::Status(VMStatus::Unimplemented)
             }

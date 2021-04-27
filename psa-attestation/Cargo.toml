@@ -12,7 +12,7 @@ crate-type = ["rlib"]
 
 [features]
 # build.rs depends on features
-tz = []
+psa = []
 sgx = []
 nitro = []
 

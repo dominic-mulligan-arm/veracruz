@@ -12,7 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::vm::VMStatus;
+use super::vm::{VeracruzSocketError, VMStatus};
 
 use byteorder::{ByteOrder, LittleEndian};
 use err_derive::Error;

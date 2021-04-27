@@ -9,26 +9,32 @@
 //! See the `LICENSE.markdown` file in the Veracruz root directory for
 //! information on licensing and copyright.
 
-use crate::{VeracruzServer, VeracruzServerLinux};
-
 #[cfg(feature = "linux")]
 pub mod veracruz_server_linux {
 
-    use bincode::{deserialize, serialize};
+    use bincode::{serialize, deserialize};
     use log::{error, info};
 
     use std::{
-        io::Write,
         net::{Shutdown, TcpStream},
         process::{Child, Command},
         thread::sleep,
         time::Duration,
     };
 
-    use crate::VeracruzServerError::VeracruzSocketError;
     use crate::{veracruz_server::VeracruzServer, VeracruzServerError};
     use veracruz_utils::{
-        receive_buffer, send_buffer, RuntimeManagerMessage, VMStatus, VeracruzPolicy,
+        platform::{
+            linux::{
+                receive_buffer,
+                send_buffer
+            },
+            vm::{
+                RuntimeManagerMessage,
+                VMStatus
+            },
+        },
+        policy::policy::Policy,
     };
 
     /// Path to the pre-built Runtime Manager enclave.
@@ -75,13 +81,13 @@ pub mod veracruz_server_linux {
             send_buffer(&mut self.socket, &message).map_err(|e| {
                 error!("Failed to transmit request to check if TLS data can be read.  Error produced: {:?}.", e);
 
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let received = receive_buffer(&mut self.socket).map_err(|e| {
                 error!("Failed to receive response to request to check if TLS data can be read.  Error produced: {:?}.", e);
 
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let message = deserialize(&received).map_err(|e| {
@@ -143,13 +149,13 @@ pub mod veracruz_server_linux {
             send_buffer(&mut self.socket, &message).map_err(|e| {
                 error!("Failed to transmit request for TLS data from Runtime Manager enclave.  Error produced: {:?}.", e);
 
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let received = receive_buffer(&self.socket).map_err(|e| {
                 error!("Failed to receive response to request for TLS data from Runtime Manager enclave.  Error produced: {:?}.", e);
 
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let message = deserialize(&received).map_err(|e| {
@@ -199,7 +205,9 @@ pub mod veracruz_server_linux {
         {
             info!("Creating new Veracruz Server instance for Linux.");
 
-            let policy_json = VeracruzPolicy::from_json(policy).map_err(|e| {
+            // TODO: add in dummy measurement and attestation token issuance here which will use
+            // fields from the JSON policy file.
+            let _policy_json = Policy::from_json(policy).map_err(|e| {
                 error!(
                     "Failed to parse Veracruz policy file.  Error produced: {:?}.",
                     e
@@ -242,7 +250,10 @@ pub mod veracruz_server_linux {
                 );
                 error!("Killing Runtime Manager enclave.");
 
-                child_process.kill();
+                // NB: we're in the process of failing here anyway, so we eat any error returned
+                // from this subprocess kill command.
+                let _result = child_process.kill();
+                
                 error
             })?;
 
@@ -282,9 +293,9 @@ pub mod veracruz_server_linux {
                     socket,
                 }),
                 RuntimeManagerMessage::Status(status) => {
-                    Err(VeracruzServerError::NitroStatus(status))
+                    Err(VeracruzServerError::VMStatus(status))
                 }
-                _otherwise => Err(VeracruzServerError::RuntimeManagerMessageStatus(message)),
+                otherwise => Err(VeracruzServerError::RuntimeManagerMessageStatus(otherwise)),
             };
         }
 
@@ -304,13 +315,13 @@ pub mod veracruz_server_linux {
                 error!("Failed to transmit proxy PSA attestation token request.  Error produced: {:?}.", e);
 
 
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let response = receive_buffer(&mut self.socket).map_err(|e| {
                 error!("Failed to receive response to proxy PSA attestation token.  Error produced: {:?}.", e);
 
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let message = deserialize(&response).map_err(|e| {
@@ -386,12 +397,12 @@ pub mod veracruz_server_linux {
 
             send_buffer(&mut self.socket, &message).map_err(|e| {
                 error!("Failed to transmit enclave certificate request message.  Error produced: {:?}.", e);
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let response = receive_buffer(&mut self.socket).map_err(|e| {
                 error!("Failed to receive response to enclave certificate request message.  Error produced: {:?}.", e);
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let message: RuntimeManagerMessage = deserialize(&response).map_err(|e| {
@@ -430,12 +441,12 @@ pub mod veracruz_server_linux {
                     "Failed to transmit enclave name request message.  Error produced: {:?}.",
                     e
                 );
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let response = receive_buffer(&mut self.socket).map_err(|e| {
                 error!("Failed to receive response to enclave name request message.  Error produced: {:?}.", e);
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let message: RuntimeManagerMessage = deserialize(&response).map_err(|e| {
@@ -474,12 +485,12 @@ pub mod veracruz_server_linux {
                     "Failed to transmit new TLS session request message.  Error produced: {:?}.",
                     e
                 );
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let response = receive_buffer(&mut self.socket).map_err(|e| {
                 error!("Failed to receive response to new TLS session request message.  Error produced: {:?}.", e);
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let message: RuntimeManagerMessage = deserialize(&response).map_err(|e| {
@@ -515,12 +526,12 @@ pub mod veracruz_server_linux {
                     "Failed to transmit TLS session close request message.  Error produced: {:?}.",
                     e
                 );
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let response = receive_buffer(&mut self.socket).map_err(|e| {
                 error!("Failed to receive response to TLS session close request message.  Error produced: {:?}.", e);
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let message: RuntimeManagerMessage = deserialize(&response).map_err(|e| {
@@ -535,7 +546,7 @@ pub mod veracruz_server_linux {
                 }
                 RuntimeManagerMessage::Status(status) => {
                     error!("TLS session close request resulted in unexpected status message.  Received: {:?}.", status);
-                    Err(VeracruzServerError::NitroStatus(status))
+                    Err(VeracruzServerError::VMStatus(status))
                 }
                 otherwise => {
                     error!(
@@ -570,7 +581,7 @@ pub mod veracruz_server_linux {
             send_buffer(&mut self.socket, &message).map_err(|e| {
                 error!("Failed to send TLS data message.  Error produced: {:?}.", e);
 
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let response = receive_buffer(&self.socket).map_err(|e| {
@@ -579,7 +590,7 @@ pub mod veracruz_server_linux {
                     e
                 );
 
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let message = deserialize(&response).map_err(|e| {
@@ -608,7 +619,7 @@ pub mod veracruz_server_linux {
             let mut active = false;
             let mut buffer = Vec::new();
 
-            while self.tls_data_needed(session_id) {
+            while self.tls_data_needed(session_id)? {
                 let (alive_status, received) = self.read_tls_data(session_id)?;
 
                 active = alive_status;
@@ -638,12 +649,12 @@ pub mod veracruz_server_linux {
                     "Failed to transmit TLS session close request message.  Error produced: {:?}.",
                     e
                 );
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let response = receive_buffer(&mut self.socket).map_err(|e| {
                 error!("Failed to receive response to TLS session close request message.  Error produced: {:?}.", e);
-                VeracruzServerError::VeracruzSocketError(e)
+                VeracruzServerError::IOError(e)
             })?;
 
             let message: RuntimeManagerMessage = deserialize(&response).map_err(|e| {

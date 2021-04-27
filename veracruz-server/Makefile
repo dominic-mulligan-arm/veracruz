@@ -18,7 +18,7 @@ INFO_COLOR := "\e[1;32m"
 RESET_COLOR := "\e[0m"
 
 deprecated:
-	@echo $(WARNING_COLOR)"The default target, compiling sgx, is deprecated. Please explicitly choose target, sgx or trustzone."$(RESET_COLOR)
+	@echo $(WARNING_COLOR)"The default target, compiling sgx, is deprecated. Please explicitly choose target, sgx, trustzone, linux-aarch64, or linux-x64."$(RESET_COLOR)
 
 ################## sgx ###################
 SGX_SDK ?= /work/sgxsdk

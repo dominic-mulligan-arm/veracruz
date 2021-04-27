@@ -175,7 +175,7 @@ linux-x64: Cargo.toml $(Linux_Src)
 	cargo build --target x86_64-unknown-linux-gnu --release --features linux
 
 linux-aarch64: Cargo.toml $(Linux_Src)
-	cargo build --target aarch64-unknown-linux-gnu --release --feature linux
+	cargo build --target aarch64-unknown-linux-gnu --release --features linux
 
 clean:
 	@cargo clean

@@ -166,7 +166,7 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
                         RuntimeManagerMessage::Status(VMStatus::Fail)
                     })
             }
-            RuntimeManagerMessage::GetPSAAttestationToken(challenge) => unimplemented!(),
+            RuntimeManagerMessage::GetPSAAttestationToken(_challenge) => unimplemented!(),
             RuntimeManagerMessage::ResetEnclave => {
                 info!("Resetting enclave.  Note that this is currently not implemented.");
 

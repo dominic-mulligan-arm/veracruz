@@ -317,4 +317,14 @@ fn print_message(message: String, code: u32) {
             message
         );
     }
+    #[cfg(feature = "linux")]
+    if code == 0 {
+        eprintln!("Enclave debug message \"{}\"", message);
+    } else {
+        eprintln!(
+            "Enclave returns error code {} and message \"{}\"",
+            code,
+            message
+        );
+    }
 }

@@ -6,11 +6,8 @@ use nix::{
     sys::socket::{setsockopt, sockopt},
     Error as NixError,
 };
-use std::{
-    fmt::Display,
-    io::Error as IOError,
-    net::{TcpListener, TcpStream},
-};
+use serde::{Deserialize, Serialize};
+use std::{io::Error as IOError, net::TcpListener, os::unix::io::AsRawFd};
 use veracruz_utils::platform::linux::{receive_buffer, send_buffer};
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -29,7 +26,7 @@ const INCOMING_PORT: &'static str = "5021";
 
 /// Captures all of the different errors that can be produced when trying to
 /// listen on, and subsequently process, all of the root enclave messages.
-#[derive(Clone, Debug, Error, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Debug, Error)]
 enum LinuxRootEnclaveError {
     #[error(
         display = "Failed to serialize or deserialize a message or response.  Error produced: {}.",
@@ -56,18 +53,30 @@ enum LinuxRootEnclaveMessage {
     /// A request to get the firmware version of the software executing inside
     /// the enclave.
     GetFirmwareVersion,
+    /// A request to shutdown the root enclave.
+    Shutdown,
 }
 
+/// Responses produced by the Linux root enclave after receiving and processing
+/// a `LinuxRootEnclaveMessage` element, above.
 #[derive(Clone, Debug, Deserialize, Eq, Serialize, PartialEq, PartialOrd, Ord)]
 enum LinuxRootEnclaveResponse {
     /// The firmware version of the software executing inside the runtime
     /// enclave.  For Linux, this is mocked up.
     FirmwareVersion(&'static str),
+    /// Acknowledgment that the root enclave is to shutdown.
+    ShuttingDown,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Responses to message stimuli.
 ////////////////////////////////////////////////////////////////////////////////
+
+/// Returns the version of the trusted runtime's software stack.  Note that on
+/// Linux this is mocked up, as the attestation process is completely insecure.
+fn get_firmware_version() -> &'static str {
+    unimplemented!()
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Entry point.
@@ -83,7 +92,7 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
 
     info!("Starting listening on {}.", listen_on);
 
-    let listener = TcpListener::bind(listen_on).map_err(|e| {
+    let listener = TcpListener::bind(&listen_on).map_err(|e| {
         error!("Failed to open TCP socket.  Error produced: {}.", e);
         LinuxRootEnclaveError::SocketError(e)
     })?;
@@ -105,27 +114,43 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
 
     info!("TCP listener connected on {:?}.", client_addr);
 
-    loop {
+    /* Set to `true` when a request to shutdown is received, breaking the
+      message processing loop, below.
+    */
+    let mut shutdown = false;
+
+    while !shutdown {
         let received_buffer: Vec<u8> = receive_buffer(&mut fd).map_err(|e| {
-            error!("Failed to receive message.  Error produced: {}.", err);
+            error!("Failed to receive message.  Error produced: {}.", e);
             LinuxRootEnclaveError::SocketError(e)
         })?;
 
         let received_message = deserialize(&received_buffer).map_err(|e| {
             error!(
                 "Failed to deserialize received message.  Error produced: {}.",
-                err
+                e
             );
             LinuxRootEnclaveError::BincodeError(e)
         })?;
 
-        info!("Received message: {}.", received_message);
+        info!("Received message: {:?}.", received_message);
 
         let response = match received_message {
-            LinuxRootEnclaveMessage::GetFirmwareVersion => unimplemented!(),
+            LinuxRootEnclaveMessage::GetFirmwareVersion => {
+                info!("Computing firmware version.");
+
+                Ok(LinuxRootEnclaveResponse::FirmwareVersion(
+                    get_firmware_version(),
+                ))
+            }
+            LinuxRootEnclaveMessage::Shutdown => {
+                info!("Shutting down the Linux root enclave.");
+                shutdown = true;
+                Ok(LinuxRootEnclaveResponse::ShuttingDown)
+            }
         }?;
 
-        info!("Producing response: {}.", response);
+        info!("Producing response: {:?}.", response);
 
         let response_buffer = serialize(&response).map_err(|e| {
             error!(
@@ -148,17 +173,13 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
 
 /// Main entry point for the program.  Calls `entry_point` and pretty-prints
 /// any error that was produced.  Initializes the logging service.
-fn main() -> i32 {
+fn main() {
     env_logger::init();
 
-    match entry_point() {
-        Err(error) => {
-            eprintln!(
-                "Linux root enclave runtime failure.  Error produced: {:?}.",
-                error
-            );
-            -1
-        }
-        Ok_(_) => 0,
-    }
+    let _ignore = entry_point().map_err(|e| {
+        eprintln!(
+            "Linux root enclave runtime failure.  Error produced: {:?}.",
+            e
+        )
+    });
 }

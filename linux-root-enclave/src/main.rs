@@ -9,6 +9,7 @@
 //! See the `LICENSE.markdown` file in the Veracruz root directory for copyright
 //! and licensing information.
 
+use crate::LinuxRootEnclaveError::LockingError;
 use bincode::{deserialize, serialize, Error as BincodeError};
 use env_logger;
 use err_derive::Error;
@@ -208,6 +209,55 @@ fn get_native_attestation_token(
     challenge: Vec<u8>,
     device_id: i32,
 ) -> Result<Vec<u8>, LinuxRootEnclaveError> {
+    info!("Obtaining native attestation token.");
+
+    /* 1. Load the root enclave private key. */
+
+    let mut root_key_handle = 0;
+
+    let status = unsafe {
+        psa_initial_attest_load_key(
+            LINUX_ROOT_ENCLAVE_PRIVATE_KEY.as_ptr(),
+            LINUX_ROOT_ENCLAVE_PRIVATE_KEY.len() as u64,
+            &mut root_key_handle,
+        )
+    };
+
+    if status != 0 {
+        error!("Failed to load Linux root enclave private key.");
+        return Err(LinuxRootEnclaveError::CryptographyError);
+    }
+
+    /* 2. Save the device ID. */
+
+    let mut device_id_lock = DEVICE_ID.lock().map_err(|| {
+        error!("Failed to obtain lock on DEVICE_ID.");
+        Err(LockingError)
+    })?;
+
+    *device_id_lock = Some(device_id);
+
+    drop(device_id_lock);
+
+    /* 3. Hash the device's public key using SHA-256. */
+
+    let device_public_key = DEVICE_PUBLIC_KEY
+        .lock()
+        .map_err(|| {
+            error!("Failed to obtain lock on DEVICE_PUBLIC_KEY.");
+            LinuxRootEnclaveError::LockingError
+        })?
+        .unwrap_or_else(|_e| {
+            error!("DEVICE_PUBLIC_KEY has not been initialized.");
+            LinuxRootEnclaveError::InvariantFailed
+        })?;
+
+    let public_key_hash = digest(&SHA256, &device_public_key);
+
+    drop(device_public_key);
+
+    /* 4. Obtain the hash of the Linux root enclave (i.e. this executable). */
+
     unimplemented!()
 }
 

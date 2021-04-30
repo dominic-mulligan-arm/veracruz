@@ -15,6 +15,7 @@ hex = "0.4.2"
 lazy_static = "1.4.0"
 log = "0.4.14"
 nix = "0.20.0"
+psa-attestation = {path = "../psa-attestation", features = ["linux"]}
 ring = "0.17.0-alpha.8"
 serde = {version = "1.0.125", features = ["derive"]}
 veracruz-utils = {path = "../veracruz-utils/", features = ["linux"]}

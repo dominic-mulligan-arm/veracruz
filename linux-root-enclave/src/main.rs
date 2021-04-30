@@ -19,12 +19,23 @@ use nix::{
     sys::socket::{setsockopt, sockopt},
     Error as NixError,
 };
-use ring::digest::{digest, SHA256};
+use psa_attestation::{
+    psa_initial_attest_get_token, psa_initial_attest_load_key, t_cose_sign1_get_verification_pubkey,
+};
+use ring::{
+    digest::{digest, SHA256},
+    rand::SystemRandom,
+    signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING},
+};
 use serde::{Deserialize, Serialize};
-use std::fs::File;
-use std::io::Read;
 use std::{
-    env::current_exe, io::Error as IOError, net::TcpListener, os::unix::io::AsRawFd, sync::Mutex,
+    env::current_exe,
+    fs::File,
+    io::{Error as IOError, Read},
+    mem::drop,
+    net::TcpListener,
+    os::unix::io::AsRawFd,
+    sync::Mutex,
 };
 use veracruz_utils::platform::linux::{receive_buffer, send_buffer};
 
@@ -42,9 +53,17 @@ lazy_static! {
     static ref DEVICE_PUBLIC_KEY: Mutex<Option<Vec<u8>>> = Mutex::new(None);
     static ref DEVICE_PRIVATE_KEY: Mutex<Option<Vec<u8>>> = Mutex::new(None);
     static ref DEVICE_ID: Mutex<Option<i32>> = Mutex::new(None);
-    static ref LINUX_ROOT_ENCLAVE_PRIVATE_KEY: Vec<u8> = vec![];
-    /// This will be populated with the measurement of this binary.
-    static ref LINUX_ROOT_ENCLAVE_HASH: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+    /// NOTE: this is hardcoded into the root enclave binary, which is
+    /// completely insecure.  A better way of doing this would be to generate a
+    /// key at initialization time and share this with the proxy attestation
+    /// service.  However, this Linux flow is a dummy attestation flow that has
+    /// limited value, anyway, given that Linux processes are not secured
+    /// against a malicious operating system.  We therefore use this approach
+    /// instead, at least for the time being.
+    static ref LINUX_ROOT_ENCLAVE_PRIVATE_KEY: Vec<u8> = vec![
+        0xe6, 0xbf, 0x1e, 0x3d, 0xb4, 0x45, 0x42, 0xbe, 0xf5, 0x35, 0xe7, 0xac, 0xbc, 0x2d, 0x54, 0xd0,
+        0xba, 0x94, 0xbf, 0xb5, 0x47, 0x67, 0x2c, 0x31, 0xc1, 0xd4, 0xee, 0x1c, 0x5, 0x76, 0xa1, 0x44,
+    ];
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -55,6 +74,12 @@ lazy_static! {
 /// listen on, and subsequently process, all of the root enclave messages.
 #[derive(Debug, Error)]
 enum LinuxRootEnclaveError {
+    #[error(display = "PSA attestation process failed.")]
+    /// Some aspect of the attestation process failed to complete correctly.
+    AttestationError,
+    #[error(display = "Cryptography key generation process failed.")]
+    /// Some aspect of the key generation process failed to complete correctly.
+    CryptographyError,
     #[error(
         display = "Failed to serialize or deserialize a message or response.  Error produced: {}.",
         _0
@@ -68,6 +93,9 @@ enum LinuxRootEnclaveError {
     /// There was an error related to the reading or writing of files needed by
     /// the root enclave.
     GeneralIOError(IOError),
+    #[error(display = "A lock on a global object could not be obtained.")]
+    /// A lock on a global object could not be obtained.
+    LockingError,
     #[error(display = "Failed to set socket options.  Error produced: {}.", _0)]
     /// We were unable to set suitable options on the TCP socket.
     SetSocketOptionsError(NixError),
@@ -195,11 +223,95 @@ fn get_proxy_attestation_token(
 // Entry point.
 ////////////////////////////////////////////////////////////////////////////////
 
+fn generate_key_pairs() -> Result<(), LinuxRootEnclaveError> {
+    info!("Generating device key pairs.");
+
+    /* 1. Generate the private key. */
+
+    let device_private_key = {
+        let rng = SystemRandom::new();
+        let pkcs_bytes = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+            .map_err(|| {
+                error!("Failed to generate PKCS key-pair.");
+                LinuxRootEnclaveError::CryptographyError
+            })?;
+        pkcs_bytes.as_ref()[38..70].to_vec()
+    };
+
+    /* 2. Register it in the global variable. */
+
+    let mut private_key_lock = DEVICE_PRIVATE_KEY.lock().map_err(|| {
+        error!("Failed to obtain lock on DEVICE_PRIVATE_KEY.");
+        LinuxRootEnclaveError::LockingError
+    })?;
+
+    *private_key_lock = Some(device_private_key);
+
+    drop(private_key_lock);
+
+    /* 3. Obtain the public key.  To obtain a correctly-formatted public key we
+         use a bit of a hack, storing the key and then retrieving it.
+    */
+
+    let mut device_key_handle = 0;
+
+    let status = unsafe {
+        psa_initial_attest_load_key(
+            device_private_key.as_ptr(),
+            device_private_key.len() as u64,
+            &mut device_key_handle,
+        )
+    };
+
+    if status != 0 {
+        error!("Failed to load device private key.");
+        return Err(LinuxRootEnclaveError::CryptographyError);
+    }
+
+    let mut public_key = Vec::with_capacity(128);
+    let mut public_key_size: u64 = 0;
+
+    let status = unsafe {
+        t_cose_sign1_get_verification_pubkey(
+            device_key_handle,
+            public_key.as_mut_ptr() as *mut u8,
+            public_key.capacity() as u64,
+            &mut public_key_size as *mut u64,
+        )
+    };
+
+    if status != 0 {
+        error!("Failed to retrieve public key.");
+        return Err(LinuxRootEnclaveError::CryptographyError);
+    }
+
+    /* 4. Trim the buffer holding the key to size. */
+
+    unsafe { public_key.set_len(public_key_size as usize) };
+
+    /* 5. Register it in a global variable. */
+
+    let mut public_key_lock = DEVICE_PUBLIC_KEY.lock().map_err(|| {
+        error!("Failed to obtain lock on DEVICE_PUBLIC_KEY.");
+        LinuxRootEnclaveError::LockingError
+    })?;
+
+    *public_key_lock = Some(public_key);
+
+    drop(public_key_lock);
+
+    info!("Device public and private key-pair generated successfully.");
+
+    Ok(())
+}
+
 /// Entry point for the root enclave.  This sets up a TCP listener and processes
 /// messages, deserializing them using Bincode.  Can fail for a variety of
 /// reasons, all of which are captured in the `LinuxRootEnclaveError` type.
 fn entry_point() -> Result<(), LinuxRootEnclaveError> {
     info!("Linux root enclave initializing.");
+
+    generate_key_pairs()?;
 
     let listen_on = format!("{}:{}", INCOMING_ADDRESS, INCOMING_PORT);
 
@@ -304,8 +416,6 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
 /// any error that was produced.  Initializes the logging service.
 fn main() {
     env_logger::init();
-
-    /* 1. Generate a device-specific public/private key-pair. */
 
     let _ignore = entry_point().map_err(|e| {
         eprintln!(

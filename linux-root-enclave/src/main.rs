@@ -252,13 +252,49 @@ fn get_native_attestation_token(
             LinuxRootEnclaveError::InvariantFailed
         })?;
 
-    let public_key_hash = digest(&SHA256, &device_public_key);
+    let device_public_key_hash = digest(&SHA256, &device_public_key);
 
     drop(device_public_key);
 
     /* 4. Obtain the hash of the Linux root enclave (i.e. this executable). */
 
-    unimplemented!()
+    let root_enclave_hash = get_root_enclave_hash()?;
+
+    /* 5. Generate the token. */
+
+    let mut token_buffer = Vec::with_capacity(1024);
+    let mut token_size: u64 = 0;
+
+    let status = unsafe {
+        psa_initial_attest_get_token(
+            &root_enclave_hash as *const u8,
+            root_enclave_hash.len() as u64,
+            device_public_key_hash.as_ptr() as *const u8,
+            device_public_key_hash.len() as u64,
+            std::ptr::null() as *const u8,
+            0,
+            challenge.as_ptr() as *const u8,
+            challenge.len() as u64,
+            token_buffer.as_mut_ptr() as *mut u8,
+            token_buffer.capacity() as u64,
+            &mut token_size as *mut u64,
+        )
+    };
+
+    if status != 0 {
+        error!("Failed to generate a PSA attestation token.");
+        return Err(LinuxRootEnclaveError::CryptographyError);
+    }
+
+    /* 6. Tidy up. */
+
+    unsafe {
+        token_buffer.set_len(token_size as usize);
+    };
+
+    info!("Successfully produced PSA attestation token.");
+
+    Ok(token_buffer)
 }
 
 fn get_proxy_attestation_token(

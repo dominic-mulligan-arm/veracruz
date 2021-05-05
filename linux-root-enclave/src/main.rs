@@ -194,6 +194,11 @@ fn get_root_enclave_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
     Ok(measurement)
 }
 
+/// Returns the measurement of the Runtime Manager binary, using SHA-256.
+fn get_runtime_manager_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
+    unimplemented!()
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Responses to message stimuli.
 ////////////////////////////////////////////////////////////////////////////////
@@ -205,6 +210,8 @@ fn get_firmware_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// Computes a native PSA attestation token from a challenge value, `challenge`,
+/// and the device ID.
 fn get_native_attestation_token(
     challenge: Vec<u8>,
     device_id: i32,
@@ -297,18 +304,98 @@ fn get_native_attestation_token(
     Ok(token_buffer)
 }
 
+/// Computes a proxy PSA attestation token from a challenge value, `challenge`,
+/// an encoding of the enclave's certificate, `certificate`, and the name of the
+/// enclave, `enclave_name`.
 fn get_proxy_attestation_token(
     challenge: Vec<u8>,
-    native_token: Vec<u8>,
+    certificate: Vec<u8>,
     enclave_name: String,
 ) -> Result<Vec<u8>, LinuxRootEnclaveError> {
-    unimplemented!()
+    info!("Obtaining proxy attestation token.");
+
+    /* 1. Obtain the device's private key. */
+
+    let device_private_key = DEVICE_PRIVATE_KEY
+        .lock()
+        .map_err(|e| {
+            error!("Failed to obtain lock on DEVICE_PRIVATE_KEY.");
+            LinuxRootEnclaveError::LockingError
+        })?
+        .unwrap_or_else(|_e| {
+            error!("DEVICE_PRIVATE_KEY has not been initialized.");
+            LinuxRootEnclaveError::InvariantFailed
+        })?;
+
+    let mut device_key_handle = 0;
+
+    let status = unsafe {
+        psa_initial_attest_load_key(
+            device_private_key.as_ptr(),
+            device_private_key.len() as u64,
+            &mut device_key_handle,
+        )
+    };
+
+    if status != 0 {
+        error!("Failed to load Linux root enclave private key.");
+        return Err(LinuxRootEnclaveError::CryptographyError);
+    }
+
+    drop(device_private_key);
+
+    /* 2. Obtain the hash of the runtime manager. */
+
+    let runtime_manager_hash = get_runtime_manager_hash()?;
+
+    /* 3. Get the enclave certificate. */
+
+    let certificate_hash = digest(&SHA256, &certificate);
+    let enclave_name_bytes = enclave_name.as_bytes();
+
+    /* 4. Generate the proxy attestation token. */
+
+    let mut token: Vec<u8> = Vec::with_capacity(2048);
+    let mut token_len: u64 = 0;
+
+    let status = unsafe {
+        psa_initial_attest_get_token(
+            runtime_manager_hash.as_ptr() as *const u8,
+            runtime_manager_hash.len() as u64,
+            certificate_hash.as_ref().as_ptr() as *const u8,
+            certificate_hash.as_ref().len() as u64,
+            enclave_name_bytes.as_ptr() as *const u8,
+            enclave_name_bytes.len() as u64,
+            challenge.as_ptr() as *const u8,
+            challenge.len() as u64,
+            token.as_mut_ptr() as *mut u8,
+            2048,
+            &mut token_len as *mut u64,
+        )
+    };
+
+    if status != 0 {
+        error!("Failed to generate proxy attestation token.");
+        return Err(LinuxRootEnclaveError::AttestationError);
+    }
+
+    /* 5. Tidy up. */
+
+    unsafe {
+        token.set_len(token_len as usize);
+    };
+
+    info!("Proxy PSA attestation token generated.");
+
+    Ok(token)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Entry point.
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Generates a public/private key pair for the root enclave to use as part of
+/// the attestation process.
 fn generate_key_pairs() -> Result<(), LinuxRootEnclaveError> {
     info!("Generating device key pairs.");
 

@@ -9,7 +9,6 @@
 //! See the `LICENSE.markdown` file in the Veracruz root directory for copyright
 //! and licensing information.
 
-use crate::LinuxRootEnclaveError::LockingError;
 use bincode::{deserialize, serialize, Error as BincodeError};
 use env_logger;
 use err_derive::Error;

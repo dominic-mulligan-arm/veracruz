@@ -212,6 +212,9 @@ impl LinuxRootEnclave {
         Self { process, socket }
     }
 
+    /// Retrieves the firmware version from the Linux root enclave.  Fails with
+    /// `Err(err)` if this process fails for any reason, otherwise returns
+    /// `Ok(version)` where `version` is the returned firmware version.
     pub fn firmware_version(&mut self) -> Result<String, LinuxRootEnclaveServerError> {
         info!("Fetching firmware version from Linux root enclave.");
 
@@ -250,6 +253,122 @@ impl LinuxRootEnclave {
             LinuxRootEnclaveResponse::FirmwareVersion(version) => {
                 info!("Received firmware version {} in response.", version);
                 Ok(String::from(version))
+            }
+            otherwise => {
+                error!(
+                    "Received unexpected response from Linux root enclave: {:?}.",
+                    otherwise
+                );
+                Err(LinuxRootEnclaveServerError::UnexpectedResponse)
+            }
+        }
+    }
+
+    /// Requests that the Linux root enclave shutdown.  Returns `Ok(())` if this
+    /// was successful, or returns `Err(err)` if this failed for any reason.
+    pub fn shutdown(&mut self) -> Result<(), LinuxRootEnclaveServerError> {
+        info!("Requesting shutdown of Linux root enclave.");
+
+        let message = serialize(&LinuxRootEnclaveMessage::Shutdown).map_err(|e| {
+            error!(
+                "Failed to serialize Shutdown message.  Error produced: {}.",
+                e
+            );
+            LinuxRootEnclaveServerError::SerializationError(e)
+        })?;
+
+        send_buffer(&mut self.socket, &message).map_err(|e| {
+            error!(
+                "Failed to transmit Shutdown message.  Error produced: {}.",
+                e
+            );
+
+            LinuxRootEnclaveServerError::SocketError(e)
+        })?;
+
+        info!("Shutdown message sent.  Awaiting response.");
+
+        let recv_buffer = receive_buffer(&self.socket).map_err(|e| {
+            error!(
+                "Failed to receive response to Shutdown message.  Error produced: {}.",
+                e
+            );
+            LinuxRootEnclaveServerError::SocketError(e)
+        })?;
+
+        let response = deserialize(&recv_buffer).map_err(|e| {
+            error!(
+                "Failed to deserialize response to Shutdown message.  Error produced: {}.",
+                e
+            );
+            LinuxRootEnclaveServerError::SerializationError(e)
+        })?;
+
+        match response {
+            LinuxRootEnclaveResponse::ShuttingDown => {
+                info!("Linux root enclave shutting down.");
+                Ok(())
+            }
+            otherwise => {
+                error!(
+                    "Received unexpected response from Linux root enclave: {:?}.",
+                    otherwise
+                );
+                Err(LinuxRootEnclaveServerError::UnexpectedResponse)
+            }
+        }
+    }
+
+    /// Requests a native attestation token is issued by the Linux root enclave
+    /// for the
+    pub fn native_attestation_token<T>(
+        &mut self,
+        challenge: Vec<u8>,
+        device_id: T,
+    ) -> Result<Vec<u8>, LinuxRootEnclaveServerError>
+    where
+        T: Into<i32>,
+    {
+        info!(
+            "Requesting native attestation token for device {}.",
+            device_id.into()
+        );
+
+        let message = serialize(&LinuxRootEnclaveMessage::GetNativeAttestation(
+            challenge, device_id,
+        ))
+        .map_err(|e| {
+            error!(
+                "Failed to serialize GetNativeAttestationToken message.  Error produced: {}.",
+                e
+            );
+            LinuxRootEnclaveServerError::SerializationError(e)
+        })?;
+
+        send_buffer(&mut self.socket, &message).map_err(|e| {
+            error!(
+                "Failed to transmit GetNativeAttestationToken message.  Error produced: {}.",
+                e
+            );
+            LinuxRootEnclaveServerError::SocketError(e)
+        })?;
+
+        info!("GetNativeAttestationToken message sent, awaiting response.");
+
+        let recv_buffer = receive_buffer(&self.socket).map_err(|e| {
+            error!("Failed to received response to GetNativeAttestationToken message.  Error produced: {}.", e);
+            LinuxRootEnclaveServerError::SocketError(e)
+        })?;
+
+        let response = deserialize(&recv_buffer).map_err(|e| {
+            error!("Failed to deserialize response to GetNativeAttestationToken message.  Error produced: {}.", e);
+            LinuxRootEnclaveServerError::SerializationError(e)
+        })?;
+
+        match response {
+            LinuxRootEnclaveResponse::NativeAttestationToken(token) => {
+                info!("Native attestation token received ({} bytes).", token.len());
+                Ok(token)
             }
             otherwise => {
                 error!(

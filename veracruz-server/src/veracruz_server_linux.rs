@@ -12,7 +12,7 @@
 #[cfg(feature = "linux")]
 pub mod veracruz_server_linux {
 
-    use bincode::{serialize, deserialize};
+    use bincode::{deserialize, serialize};
     use log::{error, info};
 
     use std::{
@@ -25,14 +25,8 @@ pub mod veracruz_server_linux {
     use crate::{veracruz_server::VeracruzServer, VeracruzServerError};
     use veracruz_utils::{
         platform::{
-            linux::{
-                receive_buffer,
-                send_buffer
-            },
-            vm::{
-                RuntimeManagerMessage,
-                VMStatus
-            },
+            linux::{receive_buffer, send_buffer},
+            vm::{RuntimeManagerMessage, VMStatus},
         },
         policy::policy::Policy,
     };
@@ -205,8 +199,8 @@ pub mod veracruz_server_linux {
         {
             info!("Creating new Veracruz Server instance for Linux.");
 
-            // TODO: add in dummy measurement and attestation token issuance here which will use
-            // fields from the JSON policy file.
+            // TODO: add in dummy measurement and attestation token issuance here
+            // which will use fields from the JSON policy file.
             let _policy_json = Policy::from_json(policy).map_err(|e| {
                 error!(
                     "Failed to parse Veracruz policy file.  Error produced: {:?}.",
@@ -253,7 +247,7 @@ pub mod veracruz_server_linux {
                 // NB: we're in the process of failing here anyway, so we eat any error returned
                 // from this subprocess kill command.
                 let _result = child_process.kill();
-                
+
                 error
             })?;
 
@@ -292,9 +286,7 @@ pub mod veracruz_server_linux {
                     child_process,
                     socket,
                 }),
-                RuntimeManagerMessage::Status(status) => {
-                    Err(VeracruzServerError::VMStatus(status))
-                }
+                RuntimeManagerMessage::Status(status) => Err(VeracruzServerError::VMStatus(status)),
                 otherwise => Err(VeracruzServerError::RuntimeManagerMessageStatus(otherwise)),
             };
         }

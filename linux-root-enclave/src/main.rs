@@ -1,4 +1,26 @@
-//! The root enclave (read: application) for Linux.
+//! The root enclave (read: application) for Linux
+//!
+//! Interprets command messages sent over a TCP socket, acts on them, then sends
+//! responses back.  Command messages consist of:
+//!
+//!  - Requests to shutdown the root enclave, which terminates the listening
+//!    loop,
+//!  - Requests to obtain the hash of the Linux root enclave server,
+//!  - Requests for proxy and native attestation tokens,
+//!  - A **hack** message which sets the hash of the runtime manager enclave to
+//!    a given value for attestation purposes.  This is because the operating
+//!    system (Linux in this case) provides no way of reliably measuring a
+//!    loaded program.
+//!
+//! **NOTE**: the attestation flow defined in this file is completely insecure,
+//! and can probably never be made really secure.
+//!
+//! As a result, we've cut a few corners implementing this (e.g. with the
+//! pre-generated `LINUX_ROOT_ENCLAVE_PRIVATE_KEY` embedded in the source below)
+//! which need fixing if they are to be used in a security-sensitive setting.
+//!
+//! See the comparable Intel SGX or AWS Nitro flows for a secure and reliable
+//! implementation of attestation for Veracruz.
 //!
 //! # Authors
 //!
@@ -46,13 +68,18 @@ use veracruz_utils::platform::linux::{receive_buffer, send_buffer};
 /// Incoming address to listen on.  Note that "0.0.0.0" means that we listen on
 /// all addresses.
 const INCOMING_ADDRESS: &'static str = "0.0.0.0";
-/// Incoming port to listen on.00000
+/// Incoming port to listen on.
 const INCOMING_PORT: &'static str = "5021";
 
 lazy_static! {
     static ref DEVICE_PUBLIC_KEY: Mutex<Option<Vec<u8>>> = Mutex::new(None);
     static ref DEVICE_PRIVATE_KEY: Mutex<Option<Vec<u8>>> = Mutex::new(None);
     static ref DEVICE_ID: Mutex<Option<i32>> = Mutex::new(None);
+    /// This stores the hash of the runtime manager.  Note that, in the current
+    /// implementation of this flow for Linux, this is provided to us by code
+    /// interacting with us, not by the operating system which provides no
+    /// reliable way of obtaining a measurement.
+    static ref RUNTIME_MANAGER_HASH: Mutex<Option<Vec<u8>>> = Mutex::new(None);
     /// NOTE: this is hardcoded into the root enclave binary, which is
     /// completely insecure.  A better way of doing this would be to generate a
     /// key at initialization time and share this with the proxy attestation
@@ -124,6 +151,14 @@ enum LinuxRootEnclaveMessage {
     /// attestation is "fake", offering no real value other than for
     /// demonstrative purposes.
     GetProxyAttestation(Vec<u8>, Vec<u8>, String),
+    /// Set the hash of the runtime manager to the supplied value.  This is
+    /// **unsafe** but necessary for Linux, as we do not have a reliable way of
+    /// obtaining a measurement of the runtime manager from the operating
+    /// system.
+    ///
+    /// One way to fix this would be to write a kernel module that measures an
+    /// application as it is loaded.
+    SetRuntimeManagerHashHack(Vec<u8>),
     /// A request to shutdown the root enclave.
     Shutdown,
 }
@@ -141,8 +176,8 @@ enum LinuxRootEnclaveResponse {
     ProxyAttestationToken(Vec<u8>),
     /// Acknowledgment that the root enclave is to shutdown.
     ShuttingDown,
-    /// The interacting party relayed an unknown or unimplemented message.
-    UnknownMessage,
+    /// Acknowledgment that the runtime manager's hash has been set.
+    HashSet,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -193,9 +228,24 @@ fn get_root_enclave_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
     Ok(measurement)
 }
 
-/// Returns the measurement of the Runtime Manager binary, using SHA-256.
+/// Returns the measurement of the Runtime Manager binary.
 fn get_runtime_manager_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
-    unimplemented!()
+    let runtime_manager_hash = RUNTIME_MANAGER_HASH.lock().map_err(|e| {
+        error!(
+            "Failed to obtain lock on RUNTIME_MANAGER_HASH.  Error produced: {}.",
+            e
+        );
+
+        LinuxRootEnclaveError::LockingError
+    })?;
+
+    match runtime_manager_hash {
+        Some(hash) => Ok(hash.clone()),
+        None => {
+            error!("No runtime manager hash available.");
+            Err(LinuxRootEnclaveError::AttestationError)
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -238,7 +288,7 @@ fn get_native_attestation_token(
 
     let mut device_id_lock = DEVICE_ID.lock().map_err(|| {
         error!("Failed to obtain lock on DEVICE_ID.");
-        Err(LockingError)
+        Err(LinuxRootEnclaveError::LockingError)
     })?;
 
     *device_id_lock = Some(device_id);
@@ -539,6 +589,22 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
                 Ok(LinuxRootEnclaveResponse::FirmwareVersion(
                     get_firmware_version(),
                 ))
+            }
+            LinuxRootEnclaveMessage::SetRuntimeManagerHashHack(hash) => {
+                info!("Setting Runtime Manager hash to {:?}.", hash);
+
+                let mut runtime_manager_hash = RUNTIME_MANAGER_HASH.lock().map_err(|e| {
+                    error!(
+                        "Failed to obtain lock on RUNTIME_MANAGER_HASH.  Error produced: {}.",
+                        e
+                    );
+
+                    LinuxRootEnclaveError::LockingError
+                })?;
+
+                *runtime_manager_hash = Some(hash);
+
+                Ok(LinuxRootEnclaveResponse::HashSet)
             }
             LinuxRootEnclaveMessage::Shutdown => {
                 info!("Shutting down the Linux root enclave.");

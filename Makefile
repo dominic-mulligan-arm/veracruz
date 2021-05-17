@@ -86,19 +86,16 @@ linux: sdk
 	pwd
 	RUSTFLAGS=$(LINUX_RUST_FLAG) $(MAKE) -C runtime-manager linux
 	RUSTFLAGS=$(LINUX_RUST_FLAG) $(MAKE) -C linux-root-enclave linux
-	RUSTFLAGS=$(LINUX_RUST_FLAG) $(MAKE) -C linux-root-enclave-server linux
 
 linux-x64: sdk
 	pwd
 	RUSTFLAGS=$(LINUX_RUST_FLAG) $(MAKE) -C runtime-manager linux-x64
 	RUSTFLAGS=$(LINUX_RUST_FLAG) $(MAKE) -C linux-root-enclave linux-x64
-	RUSTFLAGS=$(LINUX_RUST_FLAG) $(MAKE) -C linux-root-enclave-server linux-x64
 
 linux-aarch64: sdk
 	pwd
 	RUSTFLAGS=$(LINUX_RUST_FLAG) $(MAKE) -C runtime-manager linux-aarch64
 	RUSTFLAGS=$(LINUX_RUST_FLAG) $(MAKE) -C linux-root-enclave linux-aarch64
-	RUSTFLAGS=$(LINUX_RUST_FLAG) $(MAKE) -C linux-root-enclave-server linux-aarch64
 
 sgx-veracruz-server-test: sgx sgx-test-collateral veracruz-server-test/proxy-attestation-server.db
 	cd veracruz-server-test \

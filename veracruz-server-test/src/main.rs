@@ -30,8 +30,6 @@ mod tests {
     use veracruz_server::VeracruzServerSGX as VeracruzServerEnclave;
     #[cfg(feature = "tz")]
     use veracruz_server::VeracruzServerTZ as VeracruzServerEnclave;
-    #[cfg(feature = "linux")]
-    use veracruz_server::VeracruzServerLinux as VeracruzServerEnclave;
     use veracruz_utils::{platform::Platform, policy::policy::Policy};
     #[cfg(feature = "nitro")]
     use regex::Regex;

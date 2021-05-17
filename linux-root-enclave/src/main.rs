@@ -54,7 +54,6 @@ use std::{
     env::current_exe,
     fs::File,
     io::{Error as IOError, Read},
-    mem::drop,
     net::TcpListener,
     os::unix::io::AsRawFd,
     sync::Mutex,
@@ -120,6 +119,10 @@ enum LinuxRootEnclaveError {
     /// There was an error related to the reading or writing of files needed by
     /// the root enclave.
     GeneralIOError(IOError),
+    #[error(display = "An internal invariant failed.")]
+    /// An internal invariant failed, i.e. something that was not initialized that
+    /// should have been.
+    InvariantFailed,
     #[error(display = "A lock on a global object could not be obtained.")]
     /// A lock on a global object could not be obtained.
     LockingError,
@@ -239,7 +242,7 @@ fn get_runtime_manager_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
         LinuxRootEnclaveError::LockingError
     })?;
 
-    match runtime_manager_hash {
+    match &*runtime_manager_hash {
         Some(hash) => Ok(hash.clone()),
         None => {
             error!("No runtime manager hash available.");
@@ -286,31 +289,35 @@ fn get_native_attestation_token(
 
     /* 2. Save the device ID. */
 
-    let mut device_id_lock = DEVICE_ID.lock().map_err(|| {
+    let mut device_id_lock = DEVICE_ID.lock().map_err(|_e| {
         error!("Failed to obtain lock on DEVICE_ID.");
-        Err(LinuxRootEnclaveError::LockingError)
+        LinuxRootEnclaveError::LockingError
     })?;
 
     *device_id_lock = Some(device_id);
-
-    drop(device_id_lock);
 
     /* 3. Hash the device's public key using SHA-256. */
 
     let device_public_key = DEVICE_PUBLIC_KEY
         .lock()
-        .map_err(|| {
+        .map_err(|_e| {
             error!("Failed to obtain lock on DEVICE_PUBLIC_KEY.");
             LinuxRootEnclaveError::LockingError
-        })?
-        .unwrap_or_else(|_e| {
-            error!("DEVICE_PUBLIC_KEY has not been initialized.");
-            LinuxRootEnclaveError::InvariantFailed
         })?;
 
-    let device_public_key_hash = digest(&SHA256, &device_public_key);
+    let device_public_key =
+        match &*device_public_key {
+            Some(key) => key.clone(),
+            None => {
+                error!("DEVICE_PUBLIC_KEY has not been initialized.");
+                return Err(LinuxRootEnclaveError::InvariantFailed)
+            }
+        };
 
-    drop(device_public_key);
+    let device_public_key_hash =
+        digest(&SHA256, &device_public_key)
+            .as_ref()
+            .to_vec();
 
     /* 4. Obtain the hash of the Linux root enclave (i.e. this executable). */
 
@@ -323,11 +330,11 @@ fn get_native_attestation_token(
 
     let status = unsafe {
         psa_initial_attest_get_token(
-            &root_enclave_hash as *const u8,
+            root_enclave_hash.as_ptr() as *const u8,
             root_enclave_hash.len() as u64,
             device_public_key_hash.as_ptr() as *const u8,
             device_public_key_hash.len() as u64,
-            std::ptr::null() as *const u8,
+            std::ptr::null() as *const i8,
             0,
             challenge.as_ptr() as *const u8,
             challenge.len() as u64,
@@ -367,14 +374,19 @@ fn get_proxy_attestation_token(
 
     let device_private_key = DEVICE_PRIVATE_KEY
         .lock()
-        .map_err(|e| {
+        .map_err(|_e| {
             error!("Failed to obtain lock on DEVICE_PRIVATE_KEY.");
             LinuxRootEnclaveError::LockingError
-        })?
-        .unwrap_or_else(|_e| {
-            error!("DEVICE_PRIVATE_KEY has not been initialized.");
-            LinuxRootEnclaveError::InvariantFailed
         })?;
+
+    let device_private_key =
+        match &*device_private_key {
+            Some(key) => key.clone(),
+            None => {
+                error!("DEVICE_PRIVATE_KEY has not been initialized.");
+                return Err(LinuxRootEnclaveError::InvariantFailed)
+            }
+        };
 
     let mut device_key_handle = 0;
 
@@ -390,8 +402,6 @@ fn get_proxy_attestation_token(
         error!("Failed to load Linux root enclave private key.");
         return Err(LinuxRootEnclaveError::CryptographyError);
     }
-
-    drop(device_private_key);
 
     /* 2. Obtain the hash of the runtime manager. */
 
@@ -413,7 +423,7 @@ fn get_proxy_attestation_token(
             runtime_manager_hash.len() as u64,
             certificate_hash.as_ref().as_ptr() as *const u8,
             certificate_hash.as_ref().len() as u64,
-            enclave_name_bytes.as_ptr() as *const u8,
+            enclave_name_bytes.as_ptr() as *const i8,
             enclave_name_bytes.len() as u64,
             challenge.as_ptr() as *const u8,
             challenge.len() as u64,
@@ -453,7 +463,7 @@ fn generate_key_pairs() -> Result<(), LinuxRootEnclaveError> {
     let device_private_key = {
         let rng = SystemRandom::new();
         let pkcs_bytes = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
-            .map_err(|| {
+            .map_err(|_e| {
                 error!("Failed to generate PKCS key-pair.");
                 LinuxRootEnclaveError::CryptographyError
             })?;
@@ -462,14 +472,12 @@ fn generate_key_pairs() -> Result<(), LinuxRootEnclaveError> {
 
     /* 2. Register it in the global variable. */
 
-    let mut private_key_lock = DEVICE_PRIVATE_KEY.lock().map_err(|| {
+    let mut private_key_lock = DEVICE_PRIVATE_KEY.lock().map_err(|_e| {
         error!("Failed to obtain lock on DEVICE_PRIVATE_KEY.");
         LinuxRootEnclaveError::LockingError
     })?;
 
-    *private_key_lock = Some(device_private_key);
-
-    drop(private_key_lock);
+    *private_key_lock = Some(device_private_key.clone());
 
     /* 3. Obtain the public key.  To obtain a correctly-formatted public key we
          use a bit of a hack, storing the key and then retrieving it.
@@ -513,14 +521,12 @@ fn generate_key_pairs() -> Result<(), LinuxRootEnclaveError> {
 
     /* 5. Register it in a global variable. */
 
-    let mut public_key_lock = DEVICE_PUBLIC_KEY.lock().map_err(|| {
+    let mut public_key_lock = DEVICE_PUBLIC_KEY.lock().map_err(|_e| {
         error!("Failed to obtain lock on DEVICE_PUBLIC_KEY.");
         LinuxRootEnclaveError::LockingError
     })?;
 
     *public_key_lock = Some(public_key);
-
-    drop(public_key_lock);
 
     info!("Device public and private key-pair generated successfully.");
 

@@ -11,8 +11,7 @@
 
 use bincode::{deserialize, serialize};
 use log::{error, info};
-use nix::sys::socket::{setsockopt, sockopt};
-use std::{net::TcpListener, os::unix::io::AsRawFd};
+use net2::{TcpBuilder, unix::UnixTcpBuilderExt};
 
 use veracruz_utils::platform::{linux::{receive_buffer, send_buffer}, vm::{RuntimeManagerMessage, VMStatus}};
 
@@ -23,9 +22,11 @@ use crate::managers::{session_manager, RuntimeManagerError};
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Incoming address to listen on.  Note that `0.0.0.0` implies all addresses.
-const INCOMING_ADDRESS: &'static str = "0.0.0.0";
+const INCOMING_ADDRESS: &'static str = "127.0.0.1";
 /// Port to listen for incoming messages on.
-const INCOMING_PORT: &'static str = "5022";
+const INCOMING_PORT: &'static str = "3541";
+/// Backlog for incoming connections.
+const SOCKET_BACKLOG: i32 = 128;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Entry point and message dispatcher.
@@ -35,21 +36,39 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
     env_logger::init();
 
     let listen_on = format!("{}:{}", INCOMING_ADDRESS, INCOMING_PORT);
+   
+    info!("Preparing to listen on {}.", listen_on);
 
-    let listener = TcpListener::bind(&listen_on).map_err(|ioerr| {
-        error!(
-            "Failed to bind TCP listener to address {}.  Error produced: {}.",
-            listen_on, ioerr
-        );
-        RuntimeManagerError::IOError(ioerr)
-    })?;
+    let listener = TcpBuilder::new_v4()
+        .map_err(|e| {
+            error!("Failed to create TCP builder.  Error produced: {}." , e);
+            RuntimeManagerError::IOError(e)
+        })?
+        .reuse_address(true)
+        .map_err(|e| {
+            error!("Failed to set REUSE_ADDR.  Error produced: {}.", e);
+            RuntimeManagerError::IOError(e)
+        })?
+        .reuse_port(true)
+        .map_err(|e| {
+            error!("Failed to set REUSE_PORT.  Error produced: {}.", e);
+            RuntimeManagerError::IOError(e)
+        })?
+        .bind(&listen_on)
+        .map_err(|e| {
+            error!(
+                "Failed to bind socket to address {}.  Error produced: {}.",
+                listen_on, e
+            );
+            RuntimeManagerError::IOError(e)
+        })?
+        .listen(SOCKET_BACKLOG)
+        .map_err(|e| {
+            error!("Failed to create TCP listener.  Error produced: {}.", e);
+            RuntimeManagerError::IOError(e)
+        })?;
 
     info!("TCP listener created on {}.", listen_on);
-
-    if !setsockopt(listener.as_raw_fd(), sockopt::ReuseAddr, &true).is_ok() {
-        error!("Failed to set socket options.");
-        return Err(RuntimeManagerError::SetSockOptFailed);
-    }
 
     let (mut fd, client_addr) = listener.accept().map_err(|ioerr| {
         error!(
@@ -81,13 +100,16 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
         let return_message = match received_message {
             RuntimeManagerMessage::Initialize(policy_json) => {
                 info!("Initializing enclave.");
+
                 session_manager::init_session_manager(&policy_json).map_err(|serr| {
                     error!(
                         "Failed to initialize session manager.  Error produced: {}.",
-                        serr
-                    );
+                    serr);
+
                     serr
+
                 })?;
+
                 RuntimeManagerMessage::Status(VMStatus::Success)
             }
             RuntimeManagerMessage::NewTLSSession => {
@@ -168,7 +190,7 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
             }
             RuntimeManagerMessage::GetPSAAttestationToken(_challenge) => unimplemented!(),
             RuntimeManagerMessage::ResetEnclave => {
-                info!("Resetting enclave.  Note that this is currently not implemented.");
+                info!("Resetting enclave.  This is currently unimplemented.");
 
                 RuntimeManagerMessage::Status(VMStatus::Success)
             }

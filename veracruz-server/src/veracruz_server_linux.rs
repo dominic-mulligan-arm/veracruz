@@ -35,7 +35,7 @@ pub mod veracruz_server_linux {
     const RUNTIME_MANAGER_PATH: &'static str =
         "../runtime-manager/target/release/runtime_manager_enclave";
     /// Port to communicate with the Runtime Manager enclave on.
-    const RUNTIME_MANAGER_PORT: &'static str = "5022";
+    const RUNTIME_MANAGER_PORT: &'static str = "3541";
     /// IP address to use when communicating with the Runtime Manager enclave.
     const RUNTIME_MANAGER_ADDRESS: &'static str = "127.0.0.1";
     /// Delay (in seconds) to use when spawning the Runtime Manager enclave to

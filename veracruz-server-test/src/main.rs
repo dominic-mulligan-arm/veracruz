@@ -22,6 +22,8 @@ mod tests {
     use serde::Deserialize;
     use transport_protocol;
     use veracruz_server::veracruz_server::*;
+    #[cfg(feature = "linux")]
+    use veracruz_server::VeracruzServerLinux as VeracruzServerEnclave;
     #[cfg(feature = "nitro")]
     use veracruz_server::VeracruzServerNitro as VeracruzServerEnclave;
     #[cfg(feature = "sgx")]
@@ -35,8 +37,7 @@ mod tests {
     use regex::Regex;
     use proxy_attestation_server;
     use std::{
-        collections::HashMap,
-        collections::HashSet,
+        collections::{HashMap, HashSet},
         io::{Read, Write},
         path::Path,
         sync::{
@@ -234,7 +235,24 @@ mod tests {
 
         let ret = VeracruzServerEnclave::new(&policy_json);
 
-        let _veracruz_server = ret.unwrap();
+        let mut veracruz_server = ret.unwrap();
+
+        #[cfg(feature = "linux")]
+        let test_target_platform: Platform = Platform::Linux;
+        #[cfg(feature = "nitro")]
+        let test_target_platform: Platform = Platform::Nitro;
+        #[cfg(feature = "sgx")]
+        let test_target_platform: Platform = Platform::SGX;
+        #[cfg(feature = "tz")]
+        let test_target_platform: Platform = Platform::TrustZone;
+
+        let runtime_manager_hash = policy.runtime_manager_hash(&test_target_platform).unwrap();
+        let enclave_cert_hash_ret = attestation_flow(
+            &policy.proxy_attestation_server_url(),
+            &runtime_manager_hash,
+            &mut veracruz_server,
+        );
+        assert!(enclave_cert_hash_ret.is_ok())
     }
 
     #[test]
@@ -737,6 +755,9 @@ mod tests {
                 Ok(id)
             }
         })?;
+
+        #[cfg(feature = "linux")]
+        let test_target_platform: Platform = Platform::Linux;
         #[cfg(feature = "nitro")]
         let test_target_platform: Platform = Platform::Nitro;
         #[cfg(feature = "sgx")]

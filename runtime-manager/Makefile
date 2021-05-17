@@ -171,6 +171,9 @@ target/x86_64-unknown-linux-musl/release/runtime_manager_enclave: Cargo.toml $(N
 ####### Linux (AArch64 and X64) processes  #########
 Linux_Src = $(COMMON_Src) src/runtime_manager_linux.rs src/main.rs
 
+linux: Cargo.toml $(Linux_Src)
+	cargo build --release --features linux
+
 linux-x64: Cargo.toml $(Linux_Src)
 	cargo build --target x86_64-unknown-linux-gnu --release --features linux
 

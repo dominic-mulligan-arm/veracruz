@@ -51,7 +51,7 @@ where
         let mut sent_bytes = 0;
 
         while sent_bytes < len {
-            sent_bytes += fd.write(&buff[sent_bytes..len])?;
+            sent_bytes += fd.write(&buff[sent_bytes..9])?;
         }
     }
 

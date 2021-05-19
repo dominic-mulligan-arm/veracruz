@@ -13,6 +13,7 @@
 pub mod veracruz_server_linux {
 
     use bincode::{deserialize, serialize};
+    use env_logger;
     use log::{error, info};
 
     use std::{
@@ -35,13 +36,13 @@ pub mod veracruz_server_linux {
     const RUNTIME_MANAGER_PATH: &'static str =
         "../runtime-manager/target/release/runtime_manager_enclave";
     /// Port to communicate with the Runtime Manager enclave on.
-    const RUNTIME_MANAGER_PORT: &'static str = "3541";
+    const RUNTIME_MANAGER_PORT: &'static str = "9854";
     /// IP address to use when communicating with the Runtime Manager enclave.
     const RUNTIME_MANAGER_ADDRESS: &'static str = "127.0.0.1";
     /// Delay (in seconds) to use when spawning the Runtime Manager enclave to
     /// ensure that everything is started before proceeding with communication
     /// between the server and enclave.
-    const RUNTIME_MANAGER_SPAWN_DELAY_SECONDS: u64 = 1;
+    const RUNTIME_MANAGER_SPAWN_DELAY_SECONDS: u64 = 10;
 
     /// A struct capturing all the metadata needed to start and communicate with
     /// the Runtime Manager Enclave.
@@ -225,7 +226,7 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::IOError(e)
             })?;
 
-            info!("Runtime Manager enclave spawned.");
+            info!("Runtime Manager enclave spawned.  Waiting {} seconds...", RUNTIME_MANAGER_SPAWN_DELAY_SECONDS);
 
             sleep(Duration::from_secs(RUNTIME_MANAGER_SPAWN_DELAY_SECONDS));
 
@@ -251,7 +252,7 @@ pub mod veracruz_server_linux {
                 error
             })?;
 
-            info!("Now connected to Runtime Manager enclave.");
+            info!("Now connected to Runtime Manager enclave on: {:?}.", socket.peer_addr());
 
             info!("Sending Initialize message.");
 
@@ -269,25 +270,39 @@ pub mod veracruz_server_linux {
                 e
             })?;
 
+            info!("Message sent.");
+
             let init_buffer = receive_buffer(&socket).map_err(|e| {
                 error!("Failed to receive reply to enclave initialization message.  Error produced: {:?}.", e);
                 e
             })?;
+
+            info!("Response received.");
 
             let status: RuntimeManagerMessage = deserialize(&init_buffer).map_err(|e| {
                 error!("Failed to deserialize reply to enclave initialization message.  Error produced: {:?}.", e);
                 VeracruzServerError::BincodeError(*e)
             })?;
 
-            info!("Enclave fully initialized.");
-
             return match status {
-                RuntimeManagerMessage::Status(VMStatus::Success) => Ok(VeracruzServerLinux {
-                    child_process,
-                    socket,
-                }),
-                RuntimeManagerMessage::Status(status) => Err(VeracruzServerError::VMStatus(status)),
-                otherwise => Err(VeracruzServerError::RuntimeManagerMessageStatus(otherwise)),
+                RuntimeManagerMessage::Status(VMStatus::Success) => {
+                    info!("Enclave initialized.");
+
+                    Ok(VeracruzServerLinux {
+                        child_process,
+                        socket,
+                    })
+                }
+                RuntimeManagerMessage::Status(status) => {
+                    error!("Enclave sent status {:?}.", status);
+
+                    Err(VeracruzServerError::VMStatus(status))
+                }
+                otherwise => {
+                    error!("Enclave sent unexpected message: {:?}.", otherwise);
+
+                    Err(VeracruzServerError::RuntimeManagerMessageStatus(otherwise))
+                },
             };
         }
 

@@ -156,11 +156,11 @@ nitro-veracruz-server-test: nitro nitro-test-collateral veracruz-server-test/pro
 
 linux-veracruz-server-test-dry-run: linux test_cases
 	cd veracruz-server-test \
-		&& RUSTFLAGS=$(LINUX_RUST_FLAG) cargo test --features linux --no-run
+		&& RUSTFLAGS=$(LINUX_RUST_FLAG) cargo test --features linux --no-run -- --nocapture
 
 linux-veracruz-server-test: linux test_cases
 	cd veracruz-server-test \
-		&& RUSTFLAGS=$(LINUX_RUST_FLAG) cargo test --features linux \
+		&& RUSTFLAGS=$(LINUX_RUST_FLAG) cargo test --features linux -- --test-threads=1 --nocapture \
 		&& RUSTFLAGS=$(LINUX_RUST_FLAG) cargo test test_debug --features linux  -- --ignored --test-threads=1
 
 nitro-veracruz-server-test-dry-run: nitro nitro-test-collateral

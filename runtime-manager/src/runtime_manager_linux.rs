@@ -11,7 +11,7 @@
 
 use bincode::{deserialize, serialize};
 use log::{error, info};
-use net2::{TcpBuilder, unix::UnixTcpBuilderExt};
+use std::net::TcpListener;
 
 use veracruz_utils::platform::{linux::{receive_buffer, send_buffer}, vm::{RuntimeManagerMessage, VMStatus}};
 
@@ -22,9 +22,7 @@ use crate::managers::{session_manager, RuntimeManagerError};
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Incoming address to listen on.  Note that `0.0.0.0` implies all addresses.
-const INCOMING_ADDRESS: &'static str = "127.0.0.1";
-/// Port to listen for incoming messages on.
-const INCOMING_PORT: &'static str = "3541";
+const INCOMING_ADDRESS: &'static str = "0.0.0.0:9854";
 /// Backlog for incoming connections.
 const SOCKET_BACKLOG: i32 = 128;
 
@@ -35,40 +33,15 @@ const SOCKET_BACKLOG: i32 = 128;
 pub fn linux_main() -> Result<(), RuntimeManagerError> {
     env_logger::init();
 
-    let listen_on = format!("{}:{}", INCOMING_ADDRESS, INCOMING_PORT);
-   
-    info!("Preparing to listen on {}.", listen_on);
+    info!("Preparing to listen on {}.", INCOMING_ADDRESS);
 
-    let listener = TcpBuilder::new_v4()
-        .map_err(|e| {
-            error!("Failed to create TCP builder.  Error produced: {}." , e);
-            RuntimeManagerError::IOError(e)
-        })?
-        .reuse_address(true)
-        .map_err(|e| {
-            error!("Failed to set REUSE_ADDR.  Error produced: {}.", e);
-            RuntimeManagerError::IOError(e)
-        })?
-        .reuse_port(true)
-        .map_err(|e| {
-            error!("Failed to set REUSE_PORT.  Error produced: {}.", e);
-            RuntimeManagerError::IOError(e)
-        })?
-        .bind(&listen_on)
-        .map_err(|e| {
-            error!(
-                "Failed to bind socket to address {}.  Error produced: {}.",
-                listen_on, e
-            );
-            RuntimeManagerError::IOError(e)
-        })?
-        .listen(SOCKET_BACKLOG)
-        .map_err(|e| {
-            error!("Failed to create TCP listener.  Error produced: {}.", e);
-            RuntimeManagerError::IOError(e)
-        })?;
+    let listener = TcpListener::bind(INCOMING_ADDRESS).map_err(|e| {
+        error!("Could not bind TCP listener.  Error produced: {}.", e);
 
-    info!("TCP listener created on {}.", listen_on);
+        RuntimeManagerError::IOError(e)
+    })?;
+
+    info!("TCP listener created on {}.", INCOMING_ADDRESS);
 
     let (mut fd, client_addr) = listener.accept().map_err(|ioerr| {
         error!(
@@ -81,6 +54,8 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
     info!("TCP listener connected on {:?}.", client_addr);
 
     loop {
+        info!("Listening for incoming message...");
+
         let received_buffer: Vec<u8> = receive_buffer(&mut fd).map_err(|err| {
             error!("Failed to receive message.  Error produced: {}.", err);
             RuntimeManagerError::IOError(err)

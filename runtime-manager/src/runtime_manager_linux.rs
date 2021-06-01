@@ -27,6 +27,14 @@ const INCOMING_ADDRESS: &'static str = "0.0.0.0:9854";
 const SOCKET_BACKLOG: i32 = 128;
 
 ////////////////////////////////////////////////////////////////////////////////
+// PSA attestation.
+////////////////////////////////////////////////////////////////////////////////
+
+fn psa_attestation_token(challenge: &[u8]) -> Result<(Vec<u8>, i32, Vec<u8>), RuntimeManagerError> {
+    unimplemented!()
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // Entry point and message dispatcher.
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -163,7 +171,11 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
                         RuntimeManagerMessage::Status(VMStatus::Fail)
                     })
             }
-            RuntimeManagerMessage::GetPSAAttestationToken(_challenge) => unimplemented!(),
+            RuntimeManagerMessage::GetPSAAttestationToken(challenge) => {
+                info!("Obtaining PSA attestation token, with challenge: {:?}.", challenge);
+
+
+            },
             RuntimeManagerMessage::ResetEnclave => {
                 info!("Resetting enclave.  This is currently unimplemented.");
 

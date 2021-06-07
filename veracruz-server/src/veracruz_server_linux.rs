@@ -36,13 +36,13 @@ pub mod veracruz_server_linux {
     const RUNTIME_MANAGER_PATH: &'static str =
         "../runtime-manager/target/release/runtime_manager_enclave";
     /// Port to communicate with the Runtime Manager enclave on.
-    const RUNTIME_MANAGER_PORT: &'static str = "9854";
+    const RUNTIME_MANAGER_PORT: &'static str = "4854";
     /// IP address to use when communicating with the Runtime Manager enclave.
     const RUNTIME_MANAGER_ADDRESS: &'static str = "127.0.0.1";
     /// Delay (in seconds) to use when spawning the Runtime Manager enclave to
     /// ensure that everything is started before proceeding with communication
     /// between the server and enclave.
-    const RUNTIME_MANAGER_SPAWN_DELAY_SECONDS: u64 = 10;
+    const RUNTIME_MANAGER_SPAWN_DELAY_SECONDS: u64 = 2;
 
     /// A struct capturing all the metadata needed to start and communicate with
     /// the Runtime Manager Enclave.
@@ -177,13 +177,14 @@ pub mod veracruz_server_linux {
     ////////////////////////////////////////////////////////////////////////////
     // Trait implementations.
     ////////////////////////////////////////////////////////////////////////////
-
+    
     /// An implementation of the `Drop` trait that forcibly kills the runtime
     /// manager enclave, and closes the socket used for communicating with it, when
     /// a `VeracruzServerLinux` struct is about to go out of scope.
     impl Drop for VeracruzServerLinux {
         #[inline]
         fn drop(&mut self) {
+            info!("Dropping VeracruzServerLinux object, shutting down enclave...");
             if let Err(error) = self.close() {
                 error!(
                     "Failed to forcibly kill runtime enclave process.  Error produced: {:?}.",
@@ -192,7 +193,7 @@ pub mod veracruz_server_linux {
             }
         }
     }
-
+    
     impl VeracruzServer for VeracruzServerLinux {
         fn new(policy: &str) -> Result<Self, VeracruzServerError>
         where
@@ -683,6 +684,8 @@ pub mod veracruz_server_linux {
                         );
                         return Err(VeracruzServerError::IOError(e));
                     }
+
+                    info!("Enclave shutdown, and socket closed.");
 
                     Ok(true)
                 }

@@ -22,16 +22,15 @@ use crate::managers::{session_manager, RuntimeManagerError};
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Incoming address to listen on.  Note that `0.0.0.0` implies all addresses.
-const INCOMING_ADDRESS: &'static str = "0.0.0.0:9854";
-/// Backlog for incoming connections.
-const SOCKET_BACKLOG: i32 = 128;
+const INCOMING_ADDRESS: &'static str = "0.0.0.0:4854";
 
 ////////////////////////////////////////////////////////////////////////////////
 // PSA attestation.
 ////////////////////////////////////////////////////////////////////////////////
 
-fn psa_attestation_token(challenge: &[u8]) -> Result<(Vec<u8>, i32, Vec<u8>), RuntimeManagerError> {
-    unimplemented!()
+#[inline]
+fn psa_attestation_token(challenge: &[u8]) -> Result<RuntimeManagerMessage, RuntimeManagerError> {
+    Ok(RuntimeManagerMessage::PSAAttestationToken(vec![1, 2, 3], vec![3, 4, 5], 0))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -61,7 +60,9 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
 
     info!("TCP listener connected on {:?}.", client_addr);
 
-    loop {
+    let mut abort = false;
+
+    while !abort {
         info!("Listening for incoming message...");
 
         let received_buffer: Vec<u8> = receive_buffer(&mut fd).map_err(|err| {
@@ -174,10 +175,13 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
             RuntimeManagerMessage::GetPSAAttestationToken(challenge) => {
                 info!("Obtaining PSA attestation token, with challenge: {:?}.", challenge);
 
+                psa_attestation_token(&challenge)?
 
             },
             RuntimeManagerMessage::ResetEnclave => {
-                info!("Resetting enclave.  This is currently unimplemented.");
+                info!("Shutting down enclave.");
+
+                abort = true;
 
                 RuntimeManagerMessage::Status(VMStatus::Success)
             }

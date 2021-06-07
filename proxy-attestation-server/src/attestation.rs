@@ -9,7 +9,7 @@
 //! See the `LICENSE_MIT.markdown` file in the Veracruz root directory for
 //! information on licensing and copyright.
 
-#[cfg(feature = "psa")]
+#[cfg(any(feature = "tz", feature = "linux"))]
 pub mod psa;
 #[cfg(feature = "sgx")]
 pub mod sgx;
@@ -79,7 +79,7 @@ pub async fn start(body_string: String) -> ProxyAttestationServerResponder {
     match protocol.as_str() {
         #[cfg(feature = "sgx")]
         "sgx" => sgx::start(&firmware_version, device_id),
-        #[cfg(feature = "psa")]
+        #[cfg(any(feature = "tz", feature = "linux"))]
         "psa" => psa::start(&firmware_version, device_id),
         #[cfg(feature = "nitro")]
         "nitro" => nitro::start(&firmware_version, device_id),

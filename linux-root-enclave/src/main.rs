@@ -49,16 +49,14 @@ use ring::{
     rand::SystemRandom,
     signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING},
 };
-use serde::{Deserialize, Serialize};
-use std::process::Child;
 use std::{
     env::current_exe,
     fs::File,
     io::{Error as IOError, Read},
     net::TcpListener,
     os::unix::io::AsRawFd,
-    process::Command,
-    sync::{atomic::Ordering, Mutex},
+    process::{Child, Command},
+    sync::{atomic::{AtomicU32, Ordering}, Mutex},
 };
 use veracruz_utils::platform::linux::{
     receive_buffer, send_buffer, LinuxRootEnclaveMessage, LinuxRootEnclaveResponse,
@@ -278,7 +276,7 @@ fn kill_all_enclaves() -> Result<(), LinuxRootEnclaveError> {
 
         child.kill().map_err(|e| {
             error!("Failed to kill process {}.", child.id());
-        })
+        });
     }
 
     Ok(())
@@ -606,7 +604,7 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
             LinuxRootEnclaveError::BincodeError(e)
         })?;
 
-        info!("Received message: {}.", received_message);
+        info!("Received message: {:?}.", received_message);
 
         let response = match received_message {
             LinuxRootEnclaveMessage::SpawnNewApplicationEnclave => {
@@ -663,7 +661,7 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
             }
         }?;
 
-        info!("Producing response: {}.", response);
+        info!("Producing response: {:?}.", response);
 
         let response_buffer = serialize(&response).map_err(|e| {
             error!(

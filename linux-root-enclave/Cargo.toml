@@ -17,7 +17,7 @@ log = "0.4.14"
 nix = "0.20.0"
 psa-attestation = {path = "../psa-attestation", features = ["linux"]}
 ring = {git = "https://github.com/veracruz-project/ring.git", branch = "veracruz", features = ["non_sgx"] }
-serde = {version = "1.0.125", features = ["derive"]}
+serde = { git = "https://github.com/veracruz-project/serde.git", features=["derive"], branch = "veracruz" }
 veracruz-utils = {path = "../veracruz-utils/", features = ["linux"]}
 
 [profile.release]

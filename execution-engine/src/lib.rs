@@ -61,7 +61,7 @@ pub fn execute(
         }
         ExecutionStrategy::JIT => {
             cfg_if::cfg_if! {
-                if #[cfg(feature = "std")] {
+                if #[cfg(any(feature = "std", feature = "nitro"))] {
                     Box::new(WasmtimeRuntimeState::new(filesystem, program_name.to_string())?)
                 } else {
                     return Err(FatalEngineError::EngineIsNotReady);

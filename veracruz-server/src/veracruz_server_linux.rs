@@ -23,7 +23,10 @@ pub mod veracruz_server_linux {
         time::Duration,
     };
 
+    use crate::VeracruzServerError::VeracruzSocketError;
     use crate::{veracruz_server::VeracruzServer, VeracruzServerError};
+    use std::process::exit;
+    use veracruz_utils::platform::linux::{LinuxRootEnclaveMessage, LinuxRootEnclaveResponse};
     use veracruz_utils::{
         platform::{
             linux::{receive_buffer, send_buffer},
@@ -32,30 +35,38 @@ pub mod veracruz_server_linux {
         policy::policy::Policy,
     };
 
-    /// Path to the pre-built Runtime Manager enclave.
-    const RUNTIME_MANAGER_PATH: &'static str =
-        "../runtime-manager/target/release/runtime_manager_enclave";
-    /// Port to communicate with the Runtime Manager enclave on.
-    const RUNTIME_MANAGER_PORT: &'static str = "4854";
+    ////////////////////////////////////////////////////////////////////////////
+    // Constants.
+    ////////////////////////////////////////////////////////////////////////////
+
+    /// Path to the pre-built Linux root enclave.
+    const LINUX_ROOT_ENCLAVE_PATH: &'static str =
+        "../linux-root-enclave/target/release/linux-root-enclave";
+    /// Port to communicate with the Linux root enclave on.
+    const LINUX_ROOT_ENCLAVE_PORT: &'static str = "4854";
+    /// IP address to use when communicating with the Linux root enclave.
+    const LINUX_ROOT_ENCLAVE_ADDRESS: &'static str = "127.0.0.1";
     /// IP address to use when communicating with the Runtime Manager enclave.
-    const RUNTIME_MANAGER_ADDRESS: &'static str = "127.0.0.1";
-    /// Delay (in seconds) to use when spawning the Runtime Manager enclave to
+    const RUNTIME_MANAGER_ENCLAVE_ADDRESS: &'static str = "127.0.0.1";
+    /// Delay (in seconds) to use when spawning the Linux root enclave to
     /// ensure that everything is started before proceeding with communication
     /// between the server and enclave.
-    const RUNTIME_MANAGER_SPAWN_DELAY_SECONDS: u64 = 2;
+    const LINUX_ROOT_ENCLAVE_SPAWN_DELAY_SECONDS: u64 = 2;
 
     /// A struct capturing all the metadata needed to start and communicate with
-    /// the Runtime Manager Enclave.
+    /// the Linux root enclave.
     pub struct VeracruzServerLinux {
-        /// A handle to the Runtime Manager Enclave's process.
-        child_process: Child,
-        /// The socket used to communicate with the Runtime Manager Enclave.
-        socket: TcpStream,
+        /// A handle to the Linux root enclave's process.
+        linux_root_process: Child,
+        /// The socket used to communicate with the Runtime Manager enclave.
+        runtime_manager_socket: TcpStream,
+        /// The socket used to communicate with the Linux Root enclave.
+        linux_root_socket: TcpStream,
     }
 
     impl VeracruzServerLinux {
         /// Returns `Ok(true)` iff further TLS data can be read from the socket
-        /// connecting the Veracruz server and the Runtime Manager enclave.
+        /// connecting the Veracruz server and the Linux root enclave.
         /// Returns `Ok(false)` iff no further TLS data can be read.
         ///
         /// Returns an appropriate error if:
@@ -73,13 +84,13 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::BincodeError(*e)
             })?;
 
-            send_buffer(&mut self.socket, &message).map_err(|e| {
+            send_buffer(&mut self.runtime_manager_socket, &message).map_err(|e| {
                 error!("Failed to transmit request to check if TLS data can be read.  Error produced: {:?}.", e);
 
                 VeracruzServerError::IOError(e)
             })?;
 
-            let received = receive_buffer(&mut self.socket).map_err(|e| {
+            let received = receive_buffer(&mut self.runtime_manager_socket).map_err(|e| {
                 error!("Failed to receive response to request to check if TLS data can be read.  Error produced: {:?}.", e);
 
                 VeracruzServerError::IOError(e)
@@ -141,13 +152,13 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::BincodeError(*e)
             })?;
 
-            send_buffer(&mut self.socket, &message).map_err(|e| {
+            send_buffer(&mut self.runtime_manager_socket, &message).map_err(|e| {
                 error!("Failed to transmit request for TLS data from Runtime Manager enclave.  Error produced: {:?}.", e);
 
                 VeracruzServerError::IOError(e)
             })?;
 
-            let received = receive_buffer(&self.socket).map_err(|e| {
+            let received = receive_buffer(&self.runtime_manager_socket).map_err(|e| {
                 error!("Failed to receive response to request for TLS data from Runtime Manager enclave.  Error produced: {:?}.", e);
 
                 VeracruzServerError::IOError(e)
@@ -177,24 +188,39 @@ pub mod veracruz_server_linux {
     ////////////////////////////////////////////////////////////////////////////
     // Trait implementations.
     ////////////////////////////////////////////////////////////////////////////
-    
+
     /// An implementation of the `Drop` trait that forcibly kills the runtime
     /// manager enclave, and closes the socket used for communicating with it, when
     /// a `VeracruzServerLinux` struct is about to go out of scope.
     impl Drop for VeracruzServerLinux {
         #[inline]
         fn drop(&mut self) {
-            info!("Dropping VeracruzServerLinux object, shutting down enclave...");
+            info!("Dropping VeracruzServerLinux object, shutting down enclaves...");
             if let Err(error) = self.close() {
                 error!(
-                    "Failed to forcibly kill runtime enclave process.  Error produced: {:?}.",
+                    "Failed to forcibly kill Runtime Manager and Linux Root enclave process.  Error produced: {:?}.",
                     error
                 );
             }
         }
     }
-    
+
     impl VeracruzServer for VeracruzServerLinux {
+        /// Creates a new instance of the `VeracruzServerLinux` type.  To do
+        /// this, we:
+        ///
+        /// 1. Spawn the Linux Root enclave,
+        /// 2. Establish a socket connection between us and the Linux Root enclave,
+        /// 3. Ask the Linux Root enclave to spawn a new Runtime Manager enclave,
+        /// 4. Establish a socket connection to the Runtime Manager enclave on
+        ///    the port assigned to us by the Linux Root enclave,
+        /// 4. Send initializing messages to both enclaves.
+        ///
+        /// Note that this process can fail for a number of reasons, e.g. the
+        /// enclaves may not be spawnable, socket connections can fail, the
+        /// initialization processes of the two enclaves may fail, and so on.
+        /// In those cases, an explicit error is returned.  Otherwise, we return
+        /// `Ok(vsl)`.
         fn new(policy: &str) -> Result<Self, VeracruzServerError>
         where
             Self: Sized,
@@ -215,55 +241,142 @@ pub mod veracruz_server_linux {
             info!("Successfully parsed JSON policy file.");
 
             info!(
-                "Launching Runtime Manager enclave: {}.",
-                RUNTIME_MANAGER_PATH
+                "Launching Linux Root enclave: {}.",
+                RUNTIME_MANAGER_ENCLAVE_PATH
             );
 
-            let mut child_process = Command::new(RUNTIME_MANAGER_PATH).spawn().map_err(|e| {
-                error!(
-                    "Failed to launch Runtime Manager enclave.  Error produced: {:?}.",
-                    e
-                );
+            let mut linux_root_process =
+                Command::new(LINUX_ROOT_ENCLAVE_PATH).spawn().map_err(|e| {
+                    error!(
+                        "Failed to launch Linux Root enclave.  Error produced: {:?}.",
+                        e
+                    );
+                    VeracruzServerError::IOError(e)
+                })?;
+
+            info!(
+                "Linux Root enclave spawned.  Waiting {:?} seconds...",
+                LINUX_ROOT_ENCLAVE_SPAWN_DELAY_SECONDS
+            );
+
+            sleep(Duration::from_secs(LINUX_ROOT_ENCLAVE_SPAWN_DELAY_SECONDS));
+
+            let runtime_manager_address = format!(
+                "{}:{}",
+                RUNTIME_MANAGER_ENCLAVE_ADDRESS, RUNTIME_MANAGER_ENCLAVE_PORT
+            );
+
+            let linux_root_enclave_address =
+                format!("{}:{}", LINUX_ROOT_ENCLAVE_ADDRESS, LINUX_ROOT_ENCLAVE_PORT);
+
+            info!(
+                "Connecting to Linux Root enclave on {}.",
+                linux_root_enclave_address
+            );
+
+            let mut linux_root_socket =
+                TcpStream::connect(linux_root_enclave_address).map_err(|error| {
+                    error!(
+                        "Failed to connect to Linux Root enclave.  Error produced: {:?}.",
+                        error
+                    );
+                    error!("Killing Linux Root enclave.");
+
+                    // NB: we're in the process of failing here anyway, so we eat any error returned
+                    // from this subprocess kill command.
+                    let _result = linux_root_process.kill();
+
+                    error
+                })?;
+
+            info!(
+                "Now connected to Linux Root enclave on: {:?}.",
+                linux_root_socket.peer_addr()
+            );
+
+            info!("Requesting spawning of new Runtime Enclave.");
+
+            let spawn_message = serialize(&LinuxRootEnclaveMessage::SpawnNewApplicationEnclave).map_err(|e| {
+                error!("Failed to serialize spawn request for new Runtime Manager enclave.  Error produced: {}.", e);
+
+                VeracruzServerError::BincodeError(*e)
+            })?;
+
+            send_buffer(&mut linux_root_socket, &spawn_message).map_err(|e| {
+                error!("Failed to transmit enclave spawn request to Linux Root enclave.  Error produced: {}.", e);
+
                 VeracruzServerError::IOError(e)
             })?;
 
-            info!("Runtime Manager enclave spawned.  Waiting {} seconds...", RUNTIME_MANAGER_SPAWN_DELAY_SECONDS);
+            info!("Spawn request sent.");
 
-            sleep(Duration::from_secs(RUNTIME_MANAGER_SPAWN_DELAY_SECONDS));
+            let response_buffer = receive_buffer(&mut linux_root_socket).map_err(|e| {
+                error!(
+                    "Failed to receive response to enclave spawn request.  Error produced: {}.",
+                    e
+                );
 
-            let runtime_manager_address =
-                format!("{}:{}", RUNTIME_MANAGER_ADDRESS, RUNTIME_MANAGER_PORT);
+                VeracruzServerError::IOError(e)
+            })?;
+
+            let response: LinuxRootEnclaveResponse = deserialize(&response_buffer).map_err(|e| {
+                error!("Failed to deserialize response to enclave spawn request.  Error produced: {}.", e);
+
+                VeracruzServerError::BincodeError(*e)
+            })?;
+
+            info!("Response received.");
+
+            let runtime_manager_port =
+                if let LinuxRootEnclaveResponse::EnclaveSpawned(port) = response {
+                    info!("Runtime Manager enclave assigned port: {}.", port);
+                    port
+                } else {
+                    error!(
+                        "Unexpected response received from Linux Root enclave.  Received: {:?}.",
+                        response
+                    );
+
+                    return Err(VeracruzServerError::LinuxRootEnclaveUnexpectedResponse(
+                        response,
+                    ));
+                };
+
+            let runtime_manager_address = format!(
+                "{}:{}",
+                RUNTIME_MANAGER_ENCLAVE_ADDRESS, runtime_manager_port
+            );
 
             info!(
-                "Connecting to Runtime Manager enclave on {}.",
+                "Establishing connection with new Runtime Manager enclave on address: {}.",
                 runtime_manager_address
             );
 
-            let mut socket = TcpStream::connect(runtime_manager_address).map_err(|error| {
-                error!(
-                    "Failed to connect to Runtime Manager enclave.  Error produced: {:?}.",
-                    error
-                );
-                error!("Killing Runtime Manager enclave.");
+            let mut runtime_manager_socket = TcpStream::connect(&runtime_manager_address).map_err(|e| {
+                error!("Failed to connect to Runtime Manager enclave at address {}.  Error produced: {}.", runtime_manager_address, e);
 
-                // NB: we're in the process of failing here anyway, so we eat any error returned
-                // from this subprocess kill command.
-                let _result = child_process.kill();
-
-                error
+                VeracruzServerError::IOError(e)
             })?;
 
-            info!("Now connected to Runtime Manager enclave on: {:?}.", socket.peer_addr());
+            info!(
+                "Connected to Runtime Manager enclave at address {}.",
+                runtime_manager_address
+            );
 
             info!("Sending Initialize message.");
 
-            let initialize = serialize(&RuntimeManagerMessage::Initialize(policy.to_string()))
-                .map_err(|e| {
-                    error!("Failed to serialize enclave initialization message.  Error produced: {:?}.", e);
-                    VeracruzServerError::BincodeError(*e)
-                })?;
+            let initialize_message = serialize(&RuntimeManagerMessage::Initialize(
+                policy.to_string(),
+            ))
+            .map_err(|e| {
+                error!(
+                    "Failed to serialize Runtime Manager enclave initialization message.  Error produced: {:?}.",
+                    e
+                );
+                VeracruzServerError::BincodeError(*e)
+            })?;
 
-            send_buffer(&mut socket, &initialize).map_err(|e| {
+            send_buffer(&mut runtime_manager_socket, &initialize_message).map_err(|e| {
                 error!(
                     "Failed to transmit enclave initialization message.  Error produced: {:?}.",
                     e
@@ -273,25 +386,26 @@ pub mod veracruz_server_linux {
 
             info!("Message sent.");
 
-            let init_buffer = receive_buffer(&socket).map_err(|e| {
-                error!("Failed to receive reply to enclave initialization message.  Error produced: {:?}.", e);
+            let init_buffer = receive_buffer(&runtime_manager_socket).map_err(|e| {
+                error!("Failed to receive response to enclave initialization message.  Error produced: {:?}.", e);
                 e
             })?;
 
             info!("Response received.");
 
             let status: RuntimeManagerMessage = deserialize(&init_buffer).map_err(|e| {
-                error!("Failed to deserialize reply to enclave initialization message.  Error produced: {:?}.", e);
+                error!("Failed to deserialize response to enclave initialization message.  Error produced: {:?}.", e);
                 VeracruzServerError::BincodeError(*e)
             })?;
 
             return match status {
                 RuntimeManagerMessage::Status(VMStatus::Success) => {
-                    info!("Enclave initialized.");
+                    info!("Enclaves successfully initialized.");
 
                     Ok(VeracruzServerLinux {
-                        child_process,
-                        socket,
+                        linux_root_process,
+                        linux_root_socket,
+                        runtime_manager_socket,
                     })
                 }
                 RuntimeManagerMessage::Status(status) => {
@@ -303,7 +417,7 @@ pub mod veracruz_server_linux {
                     error!("Enclave sent unexpected message: {:?}.", otherwise);
 
                     Err(VeracruzServerError::RuntimeManagerMessageStatus(otherwise))
-                },
+                }
             };
         }
 
@@ -319,7 +433,7 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::BincodeError(*e)
             })?;
 
-            send_buffer(&mut self.socket, &message).map_err(|e| {
+            send_buffer(&mut self.linux_root_socket, &message).map_err(|e| {
                 error!("Failed to transmit proxy PSA attestation token request.  Error produced: {:?}.", e);
 
 

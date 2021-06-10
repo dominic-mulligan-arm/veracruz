@@ -50,15 +50,19 @@ use ring::{
     signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING},
 };
 use serde::{Deserialize, Serialize};
+use std::process::Child;
 use std::{
     env::current_exe,
     fs::File,
     io::{Error as IOError, Read},
     net::TcpListener,
     os::unix::io::AsRawFd,
-    sync::Mutex,
+    process::Command,
+    sync::{atomic::Ordering, Mutex},
 };
-use veracruz_utils::platform::linux::{receive_buffer, send_buffer};
+use veracruz_utils::platform::linux::{
+    receive_buffer, send_buffer, LinuxRootEnclaveMessage, LinuxRootEnclaveResponse,
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Constants.
@@ -69,6 +73,9 @@ use veracruz_utils::platform::linux::{receive_buffer, send_buffer};
 const INCOMING_ADDRESS: &'static str = "0.0.0.0";
 /// Incoming port to listen on.
 const INCOMING_PORT: &'static str = "5021";
+/// Path to the Runtime Manager binary.
+const RUNTIME_MANAGER_ENCLAVE_PATH: &'static str =
+    "../runtime-manager-enclave/target/release/runtime-manager-enclave";
 
 lazy_static! {
     static ref DEVICE_PUBLIC_KEY: Mutex<Option<Vec<u8>>> = Mutex::new(None);
@@ -90,6 +97,11 @@ lazy_static! {
         0xe6, 0xbf, 0x1e, 0x3d, 0xb4, 0x45, 0x42, 0xbe, 0xf5, 0x35, 0xe7, 0xac, 0xbc, 0x2d, 0x54, 0xd0,
         0xba, 0x94, 0xbf, 0xb5, 0x47, 0x67, 0x2c, 0x31, 0xc1, 0xd4, 0xee, 0x1c, 0x5, 0x76, 0xa1, 0x44,
     ];
+    /// Handles to all of the processes of the enclaves launched by the root
+    /// enclave.
+    static ref LAUNCHED_ENCLAVES: Mutex<Vec<Child>> = Mutex::new(Vec::new());
+    /// The next port to use to communicate with a newly-launched enclave.
+    static ref ENCLAVE_PORT: AtomicU32 = AtomicU32::new(6000);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -135,55 +147,6 @@ enum LinuxRootEnclaveError {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Messages.
-////////////////////////////////////////////////////////////////////////////////
-
-/// Incoming messages to the Linux root enclave, instructing it to perform some
-/// act.  These are sent serialized in `bincode` format.
-#[derive(Clone, Debug, Deserialize, Eq, Serialize, PartialEq, PartialOrd, Ord)]
-enum LinuxRootEnclaveMessage {
-    /// A request to get the firmware version of the software executing inside
-    /// the enclave.
-    GetFirmwareVersion,
-    /// A request to perform a native attestation of the runtime enclave.
-    /// Note that we use PSA attestation for this step, but the attestation is
-    /// "fake", offering no real value other than for demonstrative purposes.
-    GetNativeAttestation(Vec<u8>, i32),
-    /// A request to perform a proxy attestation of the runtime enclave.
-    /// Note that we use PSA attestation, again, for this step, but the
-    /// attestation is "fake", offering no real value other than for
-    /// demonstrative purposes.
-    GetProxyAttestation(Vec<u8>, Vec<u8>, String),
-    /// Set the hash of the runtime manager to the supplied value.  This is
-    /// **unsafe** but necessary for Linux, as we do not have a reliable way of
-    /// obtaining a measurement of the runtime manager from the operating
-    /// system.
-    ///
-    /// One way to fix this would be to write a kernel module that measures an
-    /// application as it is loaded.
-    SetRuntimeManagerHashHack(Vec<u8>),
-    /// A request to shutdown the root enclave.
-    Shutdown,
-}
-
-/// Responses produced by the Linux root enclave after receiving and processing
-/// a `LinuxRootEnclaveMessage` element, above.
-#[derive(Clone, Debug, Deserialize, Eq, Serialize, PartialEq, PartialOrd, Ord)]
-enum LinuxRootEnclaveResponse {
-    /// The firmware version of the software executing inside the runtime
-    /// enclave.  For Linux, this is mocked up.
-    FirmwareVersion(&'static str),
-    /// The token produced by the native attestation process.
-    NativeAttestationToken(Vec<u8>),
-    /// The token produced by the proxy attestation process.
-    ProxyAttestationToken(Vec<u8>),
-    /// Acknowledgment that the root enclave is to shutdown.
-    ShuttingDown,
-    /// Acknowledgment that the runtime manager's hash has been set.
-    HashSet,
-}
-
-////////////////////////////////////////////////////////////////////////////////
 // Measurement.
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -222,7 +185,7 @@ fn get_root_enclave_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
         LinuxRootEnclaveError::GeneralIOError(e)
     })?;
 
-    info!("Read {} bytes from binary.", length);
+    info!("Read {:?} bytes from binary.", length);
 
     let measurement = digest(&SHA256, &buffer).as_ref().to_vec();
 
@@ -254,6 +217,72 @@ fn get_runtime_manager_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
 ////////////////////////////////////////////////////////////////////////////////
 // Responses to message stimuli.
 ////////////////////////////////////////////////////////////////////////////////
+
+/// Launches a new instance of the Runtime Manager enclave.  Assigns a fresh
+/// port number to the enclave and returns it if the enclave is successfully
+/// launched.  Returns `Err(err)` with a suitable error if the Runtime Manager
+/// enclave cannot be launched, or if the internal database of launched enclaves
+/// cannot be locked.
+fn launch_new_runtime_manager_enclave() -> Result<u32, LinuxRootEnclaveError> {
+    info!("Launching new Runtime Manager enclave.");
+
+    let command = Command::new(RUNTIME_MANAGER_ENCLAVE_PATH)
+        .spawn()
+        .map_err(|e| {
+            error!(
+                "Failed to launch Runtime Manager enclave.  Error produced: {}.",
+                e
+            );
+
+            LinuxRootEnclaveError::GeneralIOError(e)
+        })?;
+
+    info!("New Runtime Manager enclave launched.");
+
+    let mut children = LAUNCHED_ENCLAVES.lock().map_err(|e| {
+        error!(
+            "Failed to obtain lock on LAUNCHED_ENCLAVES.  Error produced: {}.",
+            e
+        );
+
+        LinuxRootEnclaveError::LockingError
+    })?;
+
+    children.push(command);
+
+    let port = ENCLAVE_PORT.fetch_add(1u32, Ordering::SeqCst);
+
+    info!("Assigning port {} to new enclave.", port);
+
+    Ok(port)
+}
+
+/// Kills all of the enclaves that the Linux root enclave has spawned.  If any
+/// process cannot be killed then this is logged on the error logger but no
+/// further error is produced as we are in the process of exiting when this
+/// function is called, anyway.
+fn kill_all_enclaves() -> Result<(), LinuxRootEnclaveError> {
+    info!("Killing all launched Runtime Manager enclaves.");
+
+    let mut children = LAUNCHED_ENCLAVES.lock().map_err(|e| {
+        error!(
+            "Failed to obtain lock on LAUNCHED_ENCLAVES.  Error produced: {}.",
+            e
+        );
+
+        LinuxRootEnclaveError::LockingError
+    })?;
+
+    for child in children.iter_mut() {
+        info!("Killing process {}.", child.id());
+
+        child.kill().map_err(|e| {
+            error!("Failed to kill process {}.", child.id());
+        })
+    }
+
+    Ok(())
+}
 
 /// Returns the version of the trusted runtime's software stack.  Note that on
 /// Linux this is mocked up, as the attestation process is completely insecure.
@@ -298,26 +327,20 @@ fn get_native_attestation_token(
 
     /* 3. Hash the device's public key using SHA-256. */
 
-    let device_public_key = DEVICE_PUBLIC_KEY
-        .lock()
-        .map_err(|_e| {
-            error!("Failed to obtain lock on DEVICE_PUBLIC_KEY.");
-            LinuxRootEnclaveError::LockingError
-        })?;
+    let device_public_key = DEVICE_PUBLIC_KEY.lock().map_err(|_e| {
+        error!("Failed to obtain lock on DEVICE_PUBLIC_KEY.");
+        LinuxRootEnclaveError::LockingError
+    })?;
 
-    let device_public_key =
-        match &*device_public_key {
-            Some(key) => key.clone(),
-            None => {
-                error!("DEVICE_PUBLIC_KEY has not been initialized.");
-                return Err(LinuxRootEnclaveError::InvariantFailed)
-            }
-        };
+    let device_public_key = match &*device_public_key {
+        Some(key) => key.clone(),
+        None => {
+            error!("DEVICE_PUBLIC_KEY has not been initialized.");
+            return Err(LinuxRootEnclaveError::InvariantFailed);
+        }
+    };
 
-    let device_public_key_hash =
-        digest(&SHA256, &device_public_key)
-            .as_ref()
-            .to_vec();
+    let device_public_key_hash = digest(&SHA256, &device_public_key).as_ref().to_vec();
 
     /* 4. Obtain the hash of the Linux root enclave (i.e. this executable). */
 
@@ -372,21 +395,18 @@ fn get_proxy_attestation_token(
 
     /* 1. Obtain the device's private key. */
 
-    let device_private_key = DEVICE_PRIVATE_KEY
-        .lock()
-        .map_err(|_e| {
-            error!("Failed to obtain lock on DEVICE_PRIVATE_KEY.");
-            LinuxRootEnclaveError::LockingError
-        })?;
+    let device_private_key = DEVICE_PRIVATE_KEY.lock().map_err(|_e| {
+        error!("Failed to obtain lock on DEVICE_PRIVATE_KEY.");
+        LinuxRootEnclaveError::LockingError
+    })?;
 
-    let device_private_key =
-        match &*device_private_key {
-            Some(key) => key.clone(),
-            None => {
-                error!("DEVICE_PRIVATE_KEY has not been initialized.");
-                return Err(LinuxRootEnclaveError::InvariantFailed)
-            }
-        };
+    let device_private_key = match &*device_private_key {
+        Some(key) => key.clone(),
+        None => {
+            error!("DEVICE_PRIVATE_KEY has not been initialized.");
+            return Err(LinuxRootEnclaveError::InvariantFailed);
+        }
+    };
 
     let mut device_key_handle = 0;
 
@@ -586,9 +606,16 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
             LinuxRootEnclaveError::BincodeError(e)
         })?;
 
-        info!("Received message: {:?}.", received_message);
+        info!("Received message: {}.", received_message);
 
         let response = match received_message {
+            LinuxRootEnclaveMessage::SpawnNewApplicationEnclave => {
+                info!("Spawning new application enclave.");
+
+                Ok(LinuxRootEnclaveResponse::EnclaveSpawned(
+                    launch_new_runtime_manager_enclave()?,
+                ))
+            }
             LinuxRootEnclaveMessage::GetFirmwareVersion => {
                 info!("Computing firmware version.");
 
@@ -616,6 +643,7 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
                 info!("Shutting down the Linux root enclave.");
 
                 shutdown = true;
+                kill_all_enclaves()?;
 
                 Ok(LinuxRootEnclaveResponse::ShuttingDown)
             }
@@ -635,7 +663,7 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
             }
         }?;
 
-        info!("Producing response: {:?}.", response);
+        info!("Producing response: {}.", response);
 
         let response_buffer = serialize(&response).map_err(|e| {
             error!(

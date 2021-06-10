@@ -1,7 +1,7 @@
 //! Structs needed for Linux support, both inside and outside of the
 //! trusted application.
 //!
-//! ## Authors
+//! ## Authors
 //!
 //! The Veracruz Development Team.
 //!
@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 // Errors.
 ////////////////////////////////////////////////////////////////////////////////
 
-
 /// The Status value returned by the Linux application for operations
 /// This is intended to be received as a bincode serialized
 /// `LinuxRootApplicationMessage::Status`
@@ -29,6 +28,62 @@ pub enum LinuxStatus {
     Fail,
     /// The requested operation is not yet implemented.
     Unimplemented,
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Linux root enclave messages.
+////////////////////////////////////////////////////////////////////////////////
+
+/// Incoming messages to the Linux root enclave, instructing it to perform some
+/// act.  These are sent serialized in `bincode` format.
+#[derive(Clone, Debug, Deserialize, Eq, Serialize, PartialEq, PartialOrd, Ord)]
+pub enum LinuxRootEnclaveMessage {
+    /// A request to get the firmware version of the software executing inside
+    /// the enclave.
+    GetFirmwareVersion,
+    /// A request to perform a native attestation of the runtime enclave.
+    /// Note that we use PSA attestation for this step, but the attestation is
+    /// "fake", offering no real value other than for demonstrative purposes.
+    GetNativeAttestation(Vec<u8>, i32),
+    /// A request to perform a proxy attestation of the runtime enclave.
+    /// Note that we use PSA attestation, again, for this step, but the
+    /// attestation is "fake", offering no real value other than for
+    /// demonstrative purposes.
+    GetProxyAttestation(Vec<u8>, Vec<u8>, String),
+    /// Set the hash of the runtime manager to the supplied value.  This is
+    /// **unsafe** but necessary for Linux, as we do not have a reliable way of
+    /// obtaining a measurement of the runtime manager from the operating
+    /// system.
+    ///
+    /// One way to fix this would be to write a kernel module that measures an
+    /// application as it is loaded.
+    SetRuntimeManagerHashHack(Vec<u8>),
+    /// A request to shutdown the root enclave and any enclaves that it has
+    /// launched.
+    Shutdown,
+    /// A request to spawn a new enclave containing an instance of Veracruz.
+    SpawnNewApplicationEnclave,
+}
+
+/// Responses produced by the Linux root enclave after receiving and processing
+/// a `LinuxRootEnclaveMessage` element, above.
+#[derive(Clone, Debug, Deserialize, Eq, Serialize, PartialEq, PartialOrd, Ord)]
+pub enum LinuxRootEnclaveResponse {
+    /// The firmware version of the software executing inside the runtime
+    /// enclave.  For Linux, this is mocked up.
+    FirmwareVersion(&'static str),
+    /// The token produced by the native attestation process.
+    NativeAttestationToken(Vec<u8>),
+    /// The token produced by the proxy attestation process.
+    ProxyAttestationToken(Vec<u8>),
+    /// Acknowledgment that the root enclave is to shutdown.
+    ShuttingDown,
+    /// Acknowledgment that the runtime manager's hash has been set.
+    HashSet,
+    /// Indicates that a new Runtime Manager enclave has been spawned and this
+    /// new enclave should be contacted on `localhost` using the designated
+    /// port.
+    EnclaveSpawned(u32),
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -1,6 +1,6 @@
 //! Veracruz server
 //!
-//! ## Authors
+//! ## Authors
 //!
 //! The Veracruz Development Team.
 //!
@@ -19,6 +19,7 @@ use log::debug;
 use std::io::Read;
 #[cfg(feature = "nitro")]
 use veracruz_utils::nitro_enclave::NitroError;
+use veracruz_utils::platform::linux::LinuxRootEnclaveResponse;
 
 pub type VeracruzServerResponder = Result<String, VeracruzServerError>;
 
@@ -85,7 +86,10 @@ pub enum VeracruzServerError {
     #[error(display = "VeracruzServer: VMStatus: {:?}", _0)]
     VMStatus(veracruz_utils::platform::vm::VMStatus),
     #[cfg(any(feature = "linux", feature = "nitro"))]
-    #[error(display = "VeracruzServer: Received Invalid Runtime Manager Message: {:?}", _0)]
+    #[error(
+        display = "VeracruzServer: Received Invalid Runtime Manager Message: {:?}",
+        _0
+    )]
     InvalidRuntimeManagerMessage(veracruz_utils::platform::vm::RuntimeManagerMessage),
     #[cfg(feature = "nitro")]
     #[error(
@@ -169,6 +173,12 @@ pub enum VeracruzServerError {
     DirectMessageError(String, StatusCode),
     #[error(display = "VeracruzServer: Error message {}.", _0)]
     DirectStrError(&'static str),
+    #[cfg(feature = "linux")]
+    #[error(
+        display = "VeracruzServer: Unexpected reply from Linux Root enclave {}.",
+        _0
+    )]
+    LinuxRootEnclaveUnexpectedResponse(LinuxRootEnclaveResponse),
     #[error(display = "VeracruzServer: Unimplemented")]
     UnimplementedError,
     #[error(display = "VeracruzServer: Invalid runtime manager hash")]
@@ -300,7 +310,10 @@ pub fn post_buffer(url: &str, buffer: &String) -> Result<String, VeracruzServerE
         return Err(VeracruzServerError::ReceivedNonSuccessPostStatusError);
     }
 
-    debug!("veracruz_server::post_buffer header_lines:{:?}", header_lines);
+    debug!(
+        "veracruz_server::post_buffer header_lines:{:?}",
+        header_lines
+    );
 
     return Ok(received_body);
 }

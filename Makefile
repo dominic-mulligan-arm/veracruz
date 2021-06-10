@@ -216,6 +216,7 @@ clean:
 	$(MAKE) clean -C trustzone-root-enclave
 	$(MAKE) clean -C sdk
 	$(MAKE) clean -C nitro-root-enclave
+	$(MAKE) clean -C linux-root-enclave
 
 # NOTE: this target deletes ALL cargo.lock.
 clean-cargo-lock:
@@ -236,4 +237,5 @@ fmt:
 	cd veracruz-utils && cargo fmt
 	cd trustzone-root-enclave && cargo fmt
 	cd proxy-attestation-server && cargo fmt
+	cd linux-root-enclave && cargo fmt
 	$(MAKE) -C sdk fmt

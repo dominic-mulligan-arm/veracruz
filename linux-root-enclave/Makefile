@@ -6,3 +6,7 @@ linux-x64:
 
 linux:
 	cargo build --release
+
+clean:
+	cargo clean
+	$(RM) -f Cargo.lock

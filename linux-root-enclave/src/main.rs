@@ -274,7 +274,7 @@ fn kill_all_enclaves() -> Result<(), LinuxRootEnclaveError> {
     for child in children.iter_mut() {
         info!("Killing process {}.", child.id());
 
-        child.kill().map_err(|e| {
+        let _result = child.kill().map_err(|_e| {
             error!("Failed to kill process {}.", child.id());
         });
     }

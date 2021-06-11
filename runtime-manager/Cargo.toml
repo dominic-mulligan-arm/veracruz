@@ -51,6 +51,9 @@ sgx_tcrypto = { rev = "v1.1.2", git = "https://github.com/apache/teaclave-sgx-sd
 sgx_tdh = { rev = "v1.1.2", git = "https://github.com/apache/teaclave-sgx-sdk.git", optional = true }
 wasi-types = { git = "https://github.com/veracruz-project/wasi-types.git", branch = "veracruz" }
 
+[patch.crates-io]
+atty = { git = "https://github.com/veracruz-project/atty", version = "0.2" }
+
 [build-dependencies]
 uuid = { version = "0.7", features = ["v4"] }
 

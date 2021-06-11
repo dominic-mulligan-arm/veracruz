@@ -39,7 +39,7 @@ pub mod veracruz_server_linux {
     const LINUX_ROOT_ENCLAVE_PATH: &'static str =
         "../linux-root-enclave/target/release/linux-root-enclave";
     /// Port to communicate with the Linux root enclave on.
-    const LINUX_ROOT_ENCLAVE_PORT: &'static str = "4854";
+    const LINUX_ROOT_ENCLAVE_PORT: &'static str = "5021";
     /// IP address to use when communicating with the Linux root enclave.
     const LINUX_ROOT_ENCLAVE_ADDRESS: &'static str = "127.0.0.1";
     /// IP address to use when communicating with the Runtime Manager enclave.

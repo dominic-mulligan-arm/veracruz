@@ -240,6 +240,8 @@ mod tests {
     #[test]
     /// Test the attestation flow without sending any program or data into the Veracruz server
     fn test_phase1_attestation_only() {
+        env_logger::init();
+        
         let (policy, policy_json, _) = read_policy(ONE_DATA_SOURCE_POLICY).unwrap();
         setup(policy.proxy_attestation_server_url().clone());
 
@@ -322,7 +324,7 @@ mod tests {
         assert!(result.is_ok(), "error:{:?}", result);
     }
 
-    #[test]
+    // #[test]
     /// Integration test:
     /// policy: PiProvider, DataProvider and ResultReader is the same party
     /// computation: random-source, returning a vec of random u8

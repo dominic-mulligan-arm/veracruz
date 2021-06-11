@@ -13,7 +13,6 @@
 pub mod veracruz_server_linux {
 
     use bincode::{deserialize, serialize};
-    use env_logger;
     use log::{error, info};
 
     use std::{
@@ -23,13 +22,10 @@ pub mod veracruz_server_linux {
         time::Duration,
     };
 
-    use crate::VeracruzServerError::VeracruzSocketError;
     use crate::{veracruz_server::VeracruzServer, VeracruzServerError};
-    use std::process::exit;
-    use veracruz_utils::platform::linux::{LinuxRootEnclaveMessage, LinuxRootEnclaveResponse};
     use veracruz_utils::{
         platform::{
-            linux::{receive_buffer, send_buffer},
+            linux::{LinuxRootEnclaveMessage, LinuxRootEnclaveResponse, receive_buffer, send_buffer},
             vm::{RuntimeManagerMessage, VMStatus},
         },
         policy::policy::Policy,
@@ -242,7 +238,7 @@ pub mod veracruz_server_linux {
 
             info!(
                 "Launching Linux Root enclave: {}.",
-                RUNTIME_MANAGER_ENCLAVE_PATH
+                LINUX_ROOT_ENCLAVE_PATH
             );
 
             let mut linux_root_process =
@@ -260,11 +256,6 @@ pub mod veracruz_server_linux {
             );
 
             sleep(Duration::from_secs(LINUX_ROOT_ENCLAVE_SPAWN_DELAY_SECONDS));
-
-            let runtime_manager_address = format!(
-                "{}:{}",
-                RUNTIME_MANAGER_ENCLAVE_ADDRESS, RUNTIME_MANAGER_ENCLAVE_PORT
-            );
 
             let linux_root_enclave_address =
                 format!("{}:{}", LINUX_ROOT_ENCLAVE_ADDRESS, LINUX_ROOT_ENCLAVE_PORT);
@@ -443,7 +434,7 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::IOError(e)
             })?;
 
-            let response = receive_buffer(&mut self.socket).map_err(|e| {
+            let response = receive_buffer(&mut self.linux_root_socket).map_err(|e| {
                 error!("Failed to receive response to proxy PSA attestation token.  Error produced: {:?}.", e);
 
                 VeracruzServerError::IOError(e)
@@ -520,12 +511,12 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::BincodeError(*e)
             })?;
 
-            send_buffer(&mut self.socket, &message).map_err(|e| {
+            send_buffer(&mut self.runtime_manager_socket, &message).map_err(|e| {
                 error!("Failed to transmit enclave certificate request message.  Error produced: {:?}.", e);
                 VeracruzServerError::IOError(e)
             })?;
 
-            let response = receive_buffer(&mut self.socket).map_err(|e| {
+            let response = receive_buffer(&mut self.runtime_manager_socket).map_err(|e| {
                 error!("Failed to receive response to enclave certificate request message.  Error produced: {:?}.", e);
                 VeracruzServerError::IOError(e)
             })?;
@@ -561,7 +552,7 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::BincodeError(*e)
             })?;
 
-            send_buffer(&mut self.socket, &message).map_err(|e| {
+            send_buffer(&mut self.runtime_manager_socket, &message).map_err(|e| {
                 error!(
                     "Failed to transmit enclave name request message.  Error produced: {:?}.",
                     e
@@ -569,7 +560,7 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::IOError(e)
             })?;
 
-            let response = receive_buffer(&mut self.socket).map_err(|e| {
+            let response = receive_buffer(&mut self.runtime_manager_socket).map_err(|e| {
                 error!("Failed to receive response to enclave name request message.  Error produced: {:?}.", e);
                 VeracruzServerError::IOError(e)
             })?;
@@ -605,7 +596,7 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::BincodeError(*e)
             })?;
 
-            send_buffer(&mut self.socket, &message).map_err(|e| {
+            send_buffer(&mut self.runtime_manager_socket, &message).map_err(|e| {
                 error!(
                     "Failed to transmit new TLS session request message.  Error produced: {:?}.",
                     e
@@ -613,7 +604,7 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::IOError(e)
             })?;
 
-            let response = receive_buffer(&mut self.socket).map_err(|e| {
+            let response = receive_buffer(&mut self.runtime_manager_socket).map_err(|e| {
                 error!("Failed to receive response to new TLS session request message.  Error produced: {:?}.", e);
                 VeracruzServerError::IOError(e)
             })?;
@@ -646,7 +637,7 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::BincodeError(*e)
             })?;
 
-            send_buffer(&mut self.socket, &message).map_err(|e| {
+            send_buffer(&mut self.runtime_manager_socket, &message).map_err(|e| {
                 error!(
                     "Failed to transmit TLS session close request message.  Error produced: {:?}.",
                     e
@@ -654,7 +645,7 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::IOError(e)
             })?;
 
-            let response = receive_buffer(&mut self.socket).map_err(|e| {
+            let response = receive_buffer(&mut self.runtime_manager_socket).map_err(|e| {
                 error!("Failed to receive response to TLS session close request message.  Error produced: {:?}.", e);
                 VeracruzServerError::IOError(e)
             })?;
@@ -703,13 +694,13 @@ pub mod veracruz_server_linux {
                     VeracruzServerError::BincodeError(*e)
                 })?;
 
-            send_buffer(&mut self.socket, &message).map_err(|e| {
+            send_buffer(&mut self.runtime_manager_socket, &message).map_err(|e| {
                 error!("Failed to send TLS data message.  Error produced: {:?}.", e);
 
                 VeracruzServerError::IOError(e)
             })?;
 
-            let response = receive_buffer(&self.socket).map_err(|e| {
+            let response = receive_buffer(&self.runtime_manager_socket).map_err(|e| {
                 error!(
                     "Failed to receive response from TLS data message.  Error produced: {:?}.",
                     e
@@ -769,7 +760,7 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::BincodeError(*e)
             })?;
 
-            send_buffer(&mut self.socket, &message).map_err(|e| {
+            send_buffer(&mut self.runtime_manager_socket, &message).map_err(|e| {
                 error!(
                     "Failed to transmit TLS session close request message.  Error produced: {:?}.",
                     e
@@ -777,7 +768,7 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::IOError(e)
             })?;
 
-            let response = receive_buffer(&mut self.socket).map_err(|e| {
+            let response = receive_buffer(&mut self.runtime_manager_socket).map_err(|e| {
                 error!("Failed to receive response to TLS session close request message.  Error produced: {:?}.", e);
                 VeracruzServerError::IOError(e)
             })?;
@@ -789,14 +780,22 @@ pub mod veracruz_server_linux {
 
             match message {
                 RuntimeManagerMessage::Status(VMStatus::Success) => {
-                    if let Err(e) = self.socket.shutdown(Shutdown::Both) {
-                        error!("Failed to shutdown socket.  Error produced: {:?}.", e);
+                    if let Err(e) = self.runtime_manager_socket.shutdown(Shutdown::Both) {
+                        error!("Failed to shutdown Runtime Manager enclave socket.  Error produced: {:?}.", e);
                         return Err(VeracruzServerError::IOError(e));
                     }
 
-                    if let Err(e) = self.child_process.kill() {
+                    // XXX: send shutdown message to Linux root enclave to kill runtime manager
+                    // enclaves...
+
+                    if let Err(e) = self.linux_root_socket.shutdown(Shutdown::Both) {
+                        error!("Failed to shutdown Linux Root enclave socket.  Error produced: {:?}.", e);
+                        return Err(VeracruzServerError::IOError(e));
+                    }
+
+                    if let Err(e) = self.linux_root_process.kill() {
                         error!(
-                            "Failed to kill runtime enclave process.  Error produced: {:?}.",
+                            "Failed to kill Linux Root enclave process.  Error produced: {:?}.",
                             e
                         );
                         return Err(VeracruzServerError::IOError(e));

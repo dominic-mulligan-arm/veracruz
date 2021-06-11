@@ -285,8 +285,8 @@ fn kill_all_enclaves() -> Result<(), LinuxRootEnclaveError> {
 /// Returns the version of the trusted runtime's software stack.  Note that on
 /// Linux this is mocked up, as the attestation process is completely insecure.
 #[inline]
-fn get_firmware_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
+fn get_firmware_version() -> String {
+    String::from(env!("CARGO_PKG_VERSION"))
 }
 
 /// Computes a native PSA attestation token from a challenge value, `challenge`,

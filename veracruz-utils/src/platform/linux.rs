@@ -71,7 +71,7 @@ pub enum LinuxRootEnclaveMessage {
 pub enum LinuxRootEnclaveResponse {
     /// The firmware version of the software executing inside the runtime
     /// enclave.  For Linux, this is mocked up.
-    FirmwareVersion(&'static str),
+    FirmwareVersion(String),
     /// The token produced by the native attestation process.
     NativeAttestationToken(Vec<u8>),
     /// The token produced by the proxy attestation process.

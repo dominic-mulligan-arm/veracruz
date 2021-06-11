@@ -175,7 +175,7 @@ pub enum VeracruzServerError {
     DirectStrError(&'static str),
     #[cfg(feature = "linux")]
     #[error(
-        display = "VeracruzServer: Unexpected reply from Linux Root enclave {}.",
+        display = "VeracruzServer: Unexpected reply from Linux Root enclave {:?}.",
         _0
     )]
     LinuxRootEnclaveUnexpectedResponse(LinuxRootEnclaveResponse),

@@ -427,7 +427,10 @@ pub mod veracruz_server_linux {
         ) -> Result<(Vec<u8>, Vec<u8>, i32), VeracruzServerError> {
             info!("Requesting proxy PSA attestation token.");
 
-            let message = serialize(&RuntimeManagerMessage::GetPSAAttestationToken(challenge)).map_err(|e| {
+            let enclave_name = self.get_enclave_name()?;
+            let enclave_cert = self.get_enclave_cert()?;
+
+            let message = serialize(&LinuxRootEnclaveMessage::GetProxyAttestation(challenge, enclave_cert, enclave_name)).map_err(|e| {
                 error!("Failed to serialize proxy PSA attestation token request.  Error produced: {:?}.", e);
 
                 VeracruzServerError::BincodeError(*e)

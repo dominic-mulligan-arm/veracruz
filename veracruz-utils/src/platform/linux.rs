@@ -50,14 +50,6 @@ pub enum LinuxRootEnclaveMessage {
     /// attestation is "fake", offering no real value other than for
     /// demonstrative purposes.
     GetProxyAttestation(Vec<u8>, Vec<u8>, String),
-    /// Set the hash of the runtime manager to the supplied value.  This is
-    /// **unsafe** but necessary for Linux, as we do not have a reliable way of
-    /// obtaining a measurement of the runtime manager from the operating
-    /// system.
-    ///
-    /// One way to fix this would be to write a kernel module that measures an
-    /// application as it is loaded.
-    SetRuntimeManagerHashHack(Vec<u8>),
     /// A request to shutdown the root enclave and any enclaves that it has
     /// launched.
     Shutdown,
@@ -78,8 +70,6 @@ pub enum LinuxRootEnclaveResponse {
     ProxyAttestationToken(Vec<u8>),
     /// Acknowledgment that the root enclave is to shutdown.
     ShuttingDown,
-    /// Acknowledgment that the runtime manager's hash has been set.
-    HashSet,
     /// Indicates that a new Runtime Manager enclave has been spawned and this
     /// new enclave should be contacted on `localhost` using the designated
     /// port.

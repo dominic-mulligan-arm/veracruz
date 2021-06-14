@@ -53,6 +53,7 @@ use std::{
     env::current_exe,
     fs::File,
     io::{Error as IOError, Read},
+    path::Path,    
     process::{Child, Command},
     sync::{atomic::{AtomicU32, Ordering}, Mutex},
     thread::sleep,
@@ -83,11 +84,6 @@ lazy_static! {
     static ref DEVICE_PUBLIC_KEY: Mutex<Option<Vec<u8>>> = Mutex::new(None);
     static ref DEVICE_PRIVATE_KEY: Mutex<Option<Vec<u8>>> = Mutex::new(None);
     static ref DEVICE_ID: Mutex<Option<i32>> = Mutex::new(None);
-    /// This stores the hash of the runtime manager.  Note that, in the current
-    /// implementation of this flow for Linux, this is provided to us by code
-    /// interacting with us, not by the operating system which provides no
-    /// reliable way of obtaining a measurement.
-    static ref RUNTIME_MANAGER_HASH: Mutex<Option<Vec<u8>>> = Mutex::new(None);
     /// NOTE: this is hardcoded into the root enclave binary, which is
     /// completely insecure.  A better way of doing this would be to generate a
     /// key at initialization time and share this with the proxy attestation
@@ -152,26 +148,20 @@ enum LinuxRootEnclaveError {
 // Measurement.
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Computes the measurement of the root enclave binary, using SHA256.  Grabs
-/// the path of the binary (i.e. the path of this executable) and reads it,
-/// before performing a measurement.  Fails if the path cannot be obtained, or
-/// if the resulting filepath cannot be opened for reading.
-fn get_root_enclave_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
-    info!("Computing root enclave measurement.");
+/// Computes a measurement, using SHA-256, of the binary at `path`.  Fails if
+/// the binary at the path cannot be read.
+fn measure_binary<T>(path: T) -> Result<Vec<u8>, LinuxRootEnclaveError>
+where
+    T: AsRef<Path>
+{
+    let path = path.as_ref();
 
-    let path = current_exe().map_err(|e| {
-        error!(
-            "Failed to obtain the path of the runtime enclave.  Error produced: {}.",
-            e
-        );
-
-        LinuxRootEnclaveError::GeneralIOError(e)
-    })?;
+    info!("Computing measurement of binary: {:?}.", path);
 
     let mut file = File::open(path).map_err(|e| {
         error!(
-            "Failed to open the runtime enclave binary.  Error produced: {}.",
-            e
+            "Failed to open binary {:?}.  Error produced: {}.",
+            path, e
         );
 
         LinuxRootEnclaveError::GeneralIOError(e)
@@ -180,8 +170,8 @@ fn get_root_enclave_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
     let mut buffer = Vec::new();
     let length = file.read_to_end(&mut buffer).map_err(|e| {
         error!(
-            "Failed to read content of the runtime enclave binary.  Error produced: {}.",
-            e
+            "Failed to read contents of binary {:?}.  Error produced: {}.",
+            path, e
         );
 
         LinuxRootEnclaveError::GeneralIOError(e)
@@ -196,24 +186,26 @@ fn get_root_enclave_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
     Ok(measurement)
 }
 
-/// Returns the measurement of the Runtime Manager binary.
-fn get_runtime_manager_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
-    let runtime_manager_hash = RUNTIME_MANAGER_HASH.lock().map_err(|e| {
+/// Computes the measurement of the root enclave binary (i.e. this executable).
+fn get_root_enclave_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
+    info!("Computing root enclave measurement.");
+
+    let path = current_exe().map_err(|e| {
         error!(
-            "Failed to obtain lock on RUNTIME_MANAGER_HASH.  Error produced: {}.",
+            "Failed to obtain the path of the runtime enclave.  Error produced: {}.",
             e
         );
 
-        LinuxRootEnclaveError::LockingError
+        LinuxRootEnclaveError::GeneralIOError(e)
     })?;
 
-    match &*runtime_manager_hash {
-        Some(hash) => Ok(hash.clone()),
-        None => {
-            error!("No runtime manager hash available.");
-            Err(LinuxRootEnclaveError::AttestationError)
-        }
-    }
+    measure_binary(path)
+}
+
+/// Returns the measurement of the Runtime Manager binary.
+#[inline]
+fn get_runtime_manager_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
+    measure_binary(RUNTIME_MANAGER_ENCLAVE_PATH)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -645,22 +637,6 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
                 Ok(LinuxRootEnclaveResponse::FirmwareVersion(
                     get_firmware_version(),
                 ))
-            }
-            LinuxRootEnclaveMessage::SetRuntimeManagerHashHack(hash) => {
-                info!("Setting Runtime Manager hash to {:?}.", hash);
-
-                let mut runtime_manager_hash = RUNTIME_MANAGER_HASH.lock().map_err(|e| {
-                    error!(
-                        "Failed to obtain lock on RUNTIME_MANAGER_HASH.  Error produced: {}.",
-                        e
-                    );
-
-                    LinuxRootEnclaveError::LockingError
-                })?;
-
-                *runtime_manager_hash = Some(hash);
-
-                Ok(LinuxRootEnclaveResponse::HashSet)
             }
             LinuxRootEnclaveMessage::Shutdown => {
                 info!("Shutting down the Linux root enclave.");

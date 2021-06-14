@@ -10,6 +10,7 @@
 //! information on licensing and copyright.
 
 use bincode::{deserialize, serialize};
+use clap::{App, Arg};
 use log::{error, info};
 use std::net::TcpListener;
 
@@ -22,7 +23,7 @@ use crate::managers::{session_manager, RuntimeManagerError};
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Incoming address to listen on.  Note that `0.0.0.0` implies all addresses.
-const INCOMING_ADDRESS: &'static str = "0.0.0.0:4854";
+const INCOMING_ADDRESS: &'static str = "0.0.0.0";
 
 ////////////////////////////////////////////////////////////////////////////////
 // PSA attestation.
@@ -37,18 +38,43 @@ fn psa_attestation_token(challenge: &[u8]) -> Result<RuntimeManagerMessage, Runt
 // Entry point and message dispatcher.
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Main entry point for Linux: parses command line arguments to find the port
+/// number we should be listening on for incoming connections from the Veracruz
+/// server.  Parses incoming messages, and acts on them.
 pub fn linux_main() -> Result<(), RuntimeManagerError> {
     env_logger::init();
 
-    info!("Preparing to listen on {}.", INCOMING_ADDRESS);
+    let matches = App::new("Linux runtime manager enclave")
+        .author("The Veracruz Development Team")
+        .arg(
+            Arg::with_name("port")
+             .short("p")
+             .long("port")
+             .takes_value(true)
+             .required(true)
+             .help("Port to listen for new connections on.")
+             .value_name("PORT")
+        ).get_matches();
 
-    let listener = TcpListener::bind(INCOMING_ADDRESS).map_err(|e| {
+    let port = if let Some(port) = matches.value_of("port") {
+        info!("Received {} as port to listen on.", port);
+        port
+    } else {
+        error!("Did not receive any port to listen on.  Exiting...");
+        return Err(RuntimeManagerError::CommandLineArguments);
+    };
+
+    let address = format!("{}:{}", INCOMING_ADDRESS, port);
+
+    info!("Preparing to listen on {}.", address);
+
+    let listener = TcpListener::bind(&address).map_err(|e| {
         error!("Could not bind TCP listener.  Error produced: {}.", e);
 
         RuntimeManagerError::IOError(e)
     })?;
 
-    info!("TCP listener created on {}.", INCOMING_ADDRESS);
+    info!("TCP listener created on {}.", address);
 
     let (mut fd, client_addr) = listener.accept().map_err(|ioerr| {
         error!(

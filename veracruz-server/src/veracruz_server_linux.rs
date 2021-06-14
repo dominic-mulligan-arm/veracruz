@@ -61,6 +61,62 @@ pub mod veracruz_server_linux {
     }
 
     impl VeracruzServerLinux {
+        
+        /// Tears down the Linux Root enclave, and all spawned Runtime Manager enclaves creates
+        /// by it.  Then closes TCP connections and kills the Linux Root enclave process.  Tries
+        /// to be as liberal in ignoring erroneous conditions as possible in order to kill as
+        /// many things as we can.
+        fn teardown(&mut self) -> Result<bool, VeracruzServerError> {
+            info!("Tearing down Linux Root enclave, and all Runtime Manager enclaves spawned.");
+            
+            let message = serialize(&LinuxRootEnclaveMessage::Shutdown).map_err(|e| {
+                error!("Failed to serialize shutdown message.  Error produced: {}.", e);
+
+                VeracruzServerError::BincodeError(*e)
+            })?;
+
+            send_buffer(&mut self.linux_root_socket, &message).map_err(|e| {
+                error!("Failed to transmit shutdown message.  Error produced: {}.", e);
+
+                VeracruzServerError::IOError(e)
+            })?;
+
+            let response = receive_buffer(&mut self.linux_root_socket).map_err(|e| {
+                error!("Failed to receive response to shutdown message.  Error produced: {}.", e);
+
+                VeracruzServerError::IOError(e)
+            })?;
+
+            let response_message = deserialize(&response).map_err(|e| {
+                error!("Failed to deserialize response to shutdown message.  Error produced: {}.", e);
+
+                VeracruzServerError::BincodeError(*e)
+            })?;
+
+            match response_message {
+                LinuxRootEnclaveResponse::ShuttingDown => {
+                    info!("Linux Root enclave and Runtime Manager enclaves killed.");
+                    info!("Closing TCP connections.");
+
+                    let _result = self.runtime_manager_socket.shutdown(Shutdown::Both);
+                    let _result = self.linux_root_socket.shutdown(Shutdown::Both);
+                    let _result = self.linux_root_process.kill();
+
+                    Ok(true)
+                }
+                otherwise => {
+                    error!("Received unexpected response from Linux Root enclave: {:?}.", otherwise);
+                    info!("Closing TCP connections anyway...");
+
+                    let _result = self.runtime_manager_socket.shutdown(Shutdown::Both);
+                    let _result = self.linux_root_socket.shutdown(Shutdown::Both);
+                    let _result = self.linux_root_process.kill();
+
+                    Ok(true)
+                }
+            }
+        }
+
         /// Returns `Ok(true)` iff further TLS data can be read from the socket
         /// connecting the Veracruz server and the Linux root enclave.
         /// Returns `Ok(false)` iff no further TLS data can be read.
@@ -192,7 +248,7 @@ pub mod veracruz_server_linux {
         #[inline]
         fn drop(&mut self) {
             info!("Dropping VeracruzServerLinux object, shutting down enclaves...");
-            if let Err(error) = self.close() {
+            if let Err(error) = self.teardown() {
                 error!(
                     "Failed to forcibly kill Runtime Manager and Linux Root enclave process.  Error produced: {:?}.",
                     error
@@ -749,74 +805,11 @@ pub mod veracruz_server_linux {
             }
         }
 
+        /// Kills the Linux Root enclave, all spawned Runtime Manager enclaves, and all open
+        /// TCP connections and processes that we have a handle to.
+        #[inline]
         fn close(&mut self) -> Result<bool, VeracruzServerError> {
-            info!("Requesting shutdown of enclave.");
-
-            let message = serialize(&RuntimeManagerMessage::ResetEnclave).map_err(|e| {
-                error!(
-                    "Failed to serialize TLS session close request message.  Error produced: {:?}.",
-                    e
-                );
-                VeracruzServerError::BincodeError(*e)
-            })?;
-
-            send_buffer(&mut self.runtime_manager_socket, &message).map_err(|e| {
-                error!(
-                    "Failed to transmit TLS session close request message.  Error produced: {:?}.",
-                    e
-                );
-                VeracruzServerError::IOError(e)
-            })?;
-
-            let response = receive_buffer(&mut self.runtime_manager_socket).map_err(|e| {
-                error!("Failed to receive response to TLS session close request message.  Error produced: {:?}.", e);
-                VeracruzServerError::IOError(e)
-            })?;
-
-            let message: RuntimeManagerMessage = deserialize(&response).map_err(|e| {
-                error!("Failed to deserialize response to TLS session close request message.  Error produced: {:?}.", e);
-                VeracruzServerError::BincodeError(*e)
-            })?;
-
-            match message {
-                RuntimeManagerMessage::Status(VMStatus::Success) => {
-                    if let Err(e) = self.runtime_manager_socket.shutdown(Shutdown::Both) {
-                        error!("Failed to shutdown Runtime Manager enclave socket.  Error produced: {:?}.", e);
-                        return Err(VeracruzServerError::IOError(e));
-                    }
-
-                    // XXX: send shutdown message to Linux root enclave to kill runtime manager
-                    // enclaves...
-
-                    if let Err(e) = self.linux_root_socket.shutdown(Shutdown::Both) {
-                        error!("Failed to shutdown Linux Root enclave socket.  Error produced: {:?}.", e);
-                        return Err(VeracruzServerError::IOError(e));
-                    }
-
-                    if let Err(e) = self.linux_root_process.kill() {
-                        error!(
-                            "Failed to kill Linux Root enclave process.  Error produced: {:?}.",
-                            e
-                        );
-                        return Err(VeracruzServerError::IOError(e));
-                    }
-
-                    info!("Enclave shutdown, and socket closed.");
-
-                    Ok(true)
-                }
-                RuntimeManagerMessage::Status(otherwise) => {
-                    error!(
-                        "Shutdown request resulted in unexpected status message.  Received: {:?}.",
-                        otherwise
-                    );
-                    Err(VeracruzServerError::VMStatus(otherwise))
-                }
-                otherwise => {
-                    error!("Shutdown request resulted in unexpected response from enclave.  Received: {:?}.", otherwise);
-                    Err(VeracruzServerError::InvalidRuntimeManagerMessage(otherwise))
-                }
-            }
+            self.teardown()
         }
     }
 }

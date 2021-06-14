@@ -26,6 +26,9 @@ use veracruz_utils::{platform::nitro::nitro::NitroRootEnclaveMessage, io::error:
 
 #[derive(Debug, Error)]
 pub enum RuntimeManagerError {
+    #[cfg(feature = "linux")]
+    #[error(display = "RuntimeManager: CommandLineArguments")]
+    CommandLineArguments,
     #[error(display = "RuntimeManager: SessionManagerError: {:?}.", _0)]
     SessionManagerError(#[error(source)] session_manager::SessionManagerError),
     #[error(display = "RuntimeManager: TransportProtocolError: {:?}.", _0)]

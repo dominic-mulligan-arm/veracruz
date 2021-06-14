@@ -37,8 +37,8 @@ use err_derive::Error;
 use hex::encode;
 use lazy_static::lazy_static;
 use log::{error, info};
+use net2::{TcpBuilder, unix::UnixTcpBuilderExt};
 use nix::{
-    sys::socket::{setsockopt, sockopt},
     Error as NixError,
 };
 use psa_attestation::{
@@ -53,10 +53,10 @@ use std::{
     env::current_exe,
     fs::File,
     io::{Error as IOError, Read},
-    net::TcpListener,
-    os::unix::io::AsRawFd,
     process::{Child, Command},
     sync::{atomic::{AtomicU32, Ordering}, Mutex},
+    thread::sleep,
+    time::Duration
 };
 use veracruz_utils::platform::linux::{
     receive_buffer, send_buffer, LinuxRootEnclaveMessage, LinuxRootEnclaveResponse,
@@ -71,9 +71,13 @@ use veracruz_utils::platform::linux::{
 const INCOMING_ADDRESS: &'static str = "0.0.0.0";
 /// Incoming port to listen on.
 const INCOMING_PORT: &'static str = "5021";
+/// Socket backlog for incoming connections.
+const SOCKET_BACKLOG: i32 = 127;
 /// Path to the Runtime Manager binary.
 const RUNTIME_MANAGER_ENCLAVE_PATH: &'static str =
-    "../runtime-manager-enclave/target/release/runtime-manager-enclave";
+    "../runtime-manager/target/release/runtime_manager_enclave";
+/// Seconds to wait after speawning an enclave before proceeding.
+const ENCLAVE_SPAWN_DELAY: u64 = 2;
 
 lazy_static! {
     static ref DEVICE_PUBLIC_KEY: Mutex<Option<Vec<u8>>> = Mutex::new(None);
@@ -224,18 +228,27 @@ fn get_runtime_manager_hash() -> Result<Vec<u8>, LinuxRootEnclaveError> {
 fn launch_new_runtime_manager_enclave() -> Result<u32, LinuxRootEnclaveError> {
     info!("Launching new Runtime Manager enclave.");
 
+    let port = ENCLAVE_PORT.fetch_add(1u32, Ordering::SeqCst);
+
+    info!("Assigned port {} to new enclave.", port);
+
     let command = Command::new(RUNTIME_MANAGER_ENCLAVE_PATH)
+        .arg(format!("--port={}", port))
         .spawn()
         .map_err(|e| {
             error!(
-                "Failed to launch Runtime Manager enclave.  Error produced: {}.",
-                e
+                "Failed to launch Runtime Manager enclave ({}).  Error produced: {}.",
+                RUNTIME_MANAGER_ENCLAVE_PATH, e
             );
 
             LinuxRootEnclaveError::GeneralIOError(e)
         })?;
 
-    info!("New Runtime Manager enclave launched.");
+    info!("New Runtime Manager enclave launched.  Sleeping {} seconds...", ENCLAVE_SPAWN_DELAY);
+
+    sleep(Duration::from_secs(ENCLAVE_SPAWN_DELAY));
+    
+    info!("Registering new enclave.");
 
     let mut children = LAUNCHED_ENCLAVES.lock().map_err(|e| {
         error!(
@@ -247,10 +260,6 @@ fn launch_new_runtime_manager_enclave() -> Result<u32, LinuxRootEnclaveError> {
     })?;
 
     children.push(command);
-
-    let port = ENCLAVE_PORT.fetch_add(1u32, Ordering::SeqCst);
-
-    info!("Assigning port {} to new enclave.", port);
 
     Ok(port)
 }
@@ -563,17 +572,33 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
 
     info!("Starting listening on {}.", listen_on);
 
-    let listener = TcpListener::bind(&listen_on).map_err(|e| {
-        error!("Failed to open TCP socket.  Error produced: {}.", e);
-        LinuxRootEnclaveError::SocketError(e)
-    })?;
+    let listener = TcpBuilder::new_v4()
+        .map_err(|e| {
+            error!("Failed to create new TCP builder.  Error produed: {}.", e);
+            LinuxRootEnclaveError::GeneralIOError(e)
+        })?
+        .reuse_address(true)
+        .map_err(|e| {
+            error!("Failed to set Reuse Address option on socket.  Error produced: {}.", e);
+            LinuxRootEnclaveError::SocketError(e)
+        })?
+        .reuse_port(true)
+        .map_err(|e| {
+            error!("Failed to set Reuse Port option on socket.  Error produced: {}.", e);
+            LinuxRootEnclaveError::SocketError(e)
+        })?
+        .bind(&listen_on)
+        .map_err(|e| {
+            error!("Failed to bind socket on {}.  Error produced: {}.", listen_on, e);
+            LinuxRootEnclaveError::SocketError(e)
+        })?
+        .listen(SOCKET_BACKLOG)
+        .map_err(|e| {
+            error!("Failed to listen on {}.  Error produced: {}.", listen_on, e);
+            LinuxRootEnclaveError::SocketError(e)
+        })?;
 
     info!("Started listening on {}.", listen_on);
-
-    if let Err(e) = setsockopt(listener.as_raw_fd(), sockopt::ReuseAddr, &true) {
-        error!("Failed to set socket options.  Error produced: {}.", e);
-        return Err(LinuxRootEnclaveError::SetSocketOptionsError(e));
-    }
 
     let (mut fd, client_addr) = listener.accept().map_err(|ioerr| {
         error!(

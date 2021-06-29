@@ -44,12 +44,19 @@ pub enum LinuxRootEnclaveMessage {
     /// A request to perform a native attestation of the runtime enclave.
     /// Note that we use PSA attestation for this step, but the attestation is
     /// "fake", offering no real value other than for demonstrative purposes.
-    GetNativeAttestation(Vec<u8>, i32),
+    /// The fields of the message are (in order):
+    /// - A device ID,
+    /// - A challenge value,
+    /// - A certificate signing request (CSR).
+    GetNativeAttestation(i32, Vec<u8>, Vec<u8>),
     /// A request to perform a proxy attestation of the runtime enclave.
     /// Note that we use PSA attestation, again, for this step, but the
     /// attestation is "fake", offering no real value other than for
     /// demonstrative purposes.
-    GetProxyAttestation(Vec<u8>, Vec<u8>, String),
+    /// The fields of the message are (in order):
+    /// - A certificate signing request (CSR),
+    /// - A challenge ID.
+    GetProxyAttestation(Vec<u8>, u32),
     /// A request to shutdown the root enclave and any enclaves that it has
     /// launched.
     Shutdown,
@@ -84,7 +91,7 @@ pub enum LinuxRootEnclaveResponse {
 /// the data proper) to the file descriptor `fd`.
 pub fn send_buffer<T>(mut fd: T, buffer: &[u8]) -> Result<(), std::io::Error>
 where
-    T: std::io::Write
+    T: std::io::Write,
 {
     let len = buffer.len();
 
@@ -116,7 +123,7 @@ where
 /// of data, followed by the data proper.
 pub fn receive_buffer<T>(mut fd: T) -> Result<Vec<u8>, std::io::Error>
 where
-    T: std::io::Read
+    T: std::io::Read,
 {
     // 1. First read and decode the length of the data proper.
     let length = {

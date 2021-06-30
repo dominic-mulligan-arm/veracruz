@@ -39,8 +39,7 @@ use crate::{
     fs::FileSystem,
     wasi::{common::ExecutionEngine, wasmi::WASMIRuntimeState},
 };
-use std::sync::Mutex;
-use std::{boxed::Box, string::ToString, sync::Arc};
+use std::{boxed::Box, string::ToString};
 use veracruz_utils::policy::principal::ExecutionStrategy;
 
 /// The top-level function executes program `program_name` on

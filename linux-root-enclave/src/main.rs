@@ -39,9 +39,7 @@ use lazy_static::lazy_static;
 use log::{error, info};
 use net2::{unix::UnixTcpBuilderExt, TcpBuilder};
 use nix::Error as NixError;
-use psa_attestation::{
-    psa_initial_attest_get_token, psa_initial_attest_load_key, t_cose_sign1_get_verification_pubkey,
-};
+use psa_attestation::psa_initial_attest_get_token;
 use ring::rand::SecureRandom;
 use ring::{
     digest::{digest, SHA256},
@@ -316,9 +314,9 @@ fn start_proxy_attestation() -> Result<(Vec<u8>, u32), LinuxRootEnclaveError> {
     info!("Fresh challenge ID generated: {}. ", challenge_id);
 
     let mut buffer = Vec::with_capacity(16);
-    let mut rng = SystemRandom::new();
+    let rng = SystemRandom::new();
 
-    rng.fill(&mut buffer).map_err(|e| {
+    rng.fill(&mut buffer).map_err(|_e| {
         error!("Failed to produced 16 bytes of random data for challenge.");
 
         LinuxRootEnclaveError::CryptographyError
@@ -345,7 +343,7 @@ fn start_proxy_attestation() -> Result<(Vec<u8>, u32), LinuxRootEnclaveError> {
 fn install_certificate_chain(
     root_enclave_certificate: Vec<u8>,
     root_certificate: Vec<u8>,
-) -> Result<(), LinuxRootEnclaveResponse> {
+) -> Result<(), LinuxRootEnclaveError> {
     let mut certificate_chain_lock = CERTIFICATE_CHAIN.lock().map_err(|e| {
         error!(
             "Failed to obtain lock on CERTIFICATE_CHAIN.  Error produced: {}.",
@@ -399,11 +397,11 @@ fn get_native_attestation_token(
 
     if 0 != unsafe {
         psa_initial_attest_get_token(
-            &root_enclave_measurement as *const u8,
+            root_enclave_measurement.as_ptr() as *const u8,
             root_enclave_measurement.len() as u64,
             csr_hash.as_ptr() as *const u8,
             csr_hash.len() as u64,
-            std::ptr::null() as *const u8,
+            std::ptr::null() as *const i8,
             0,
             challenge.as_ptr() as *const u8,
             challenge.len() as u64,
@@ -439,7 +437,7 @@ fn get_proxy_attestation_certificate_chain(
 
     let _challenge = challenge_hashes_lock
         .remove(&challenge_id)
-        .ok_or_else(|e| {
+        .ok_or_else(|| {
             error!("Unknown challenge ID: {}.", challenge_id);
 
             LinuxRootEnclaveError::AttestationError
@@ -451,7 +449,7 @@ fn get_proxy_attestation_certificate_chain(
 
     info!("Runtime Manager hash computed: {:?}.", runtime_manager_hash);
 
-    let device_private_key = DEVICE_PRIVATE_KEY.lock().map_err(|e| {
+    let device_private_key_lock = DEVICE_PRIVATE_KEY.lock().map_err(|e| {
         error!(
             "Failed to obtain lock on DEVICE_PRIVATE_KEY.  Error produced: {}.",
             e
@@ -460,8 +458,8 @@ fn get_proxy_attestation_certificate_chain(
         LinuxRootEnclaveError::LockingError
     })?;
 
-    let device_private_key = match device_private_key {
-        Some(k) => k,
+    let device_private_key = match &*device_private_key_lock {
+        Some(k) => k.clone(),
         None => {
             error!("Device private key is not initialized.");
             return Err(LinuxRootEnclaveError::InvariantFailed);
@@ -480,7 +478,7 @@ fn get_proxy_attestation_certificate_chain(
             },
         )?;
 
-    let mut runtime_manager_certificate = convert_csr_to_cert(&csr, &COMPUTE_ENCLAVE_CERT_TEMPLATE, &runtime_manager_hash, &private_key).map_err(|e| {
+    let runtime_manager_certificate = convert_csr_to_cert(&csr, &COMPUTE_ENCLAVE_CERT_TEMPLATE, &runtime_manager_hash, &private_key).map_err(|e| {
         error!("Failed to convert Certificate Signing Request (CSR) into certificate.  Error produced: {:?}.", e);
 
         LinuxRootEnclaveError::CryptographyError
@@ -488,17 +486,19 @@ fn get_proxy_attestation_certificate_chain(
 
     info!("Runtime Manager certificate generated.");
 
-    let (root_enclave_certificate, root_certificate) =
-        match CERTIFICATE_CHAIN.lock().map_err(|e| {
+    let certificate_chain_lock = CERTIFICATE_CHAIN.lock().map_err(|e| {
             error!(
                 "Failed to obtain lock on CERTIFICATE_CHAIN.  Error produced: {}.",
                 e
             );
 
             LinuxRootEnclaveError::LockingError
-        })? {
+        })?;
+    
+    let (root_enclave_certificate, root_certificate) =
+        match &*certificate_chain_lock {
             Some((root_enclave_certificate, root_certificate)) => {
-                (root_enclave_certificate, root_certificate)
+                (root_enclave_certificate.clone(), root_certificate.clone())
             }
             None => {
                 error!("Root Enclave and Root certificates not stored.");

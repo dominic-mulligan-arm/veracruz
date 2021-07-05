@@ -42,6 +42,7 @@ use nix::Error as NixError;
 use psa_attestation::{
     psa_initial_attest_get_token, psa_initial_attest_load_key, t_cose_sign1_get_verification_pubkey,
 };
+use ring::rand::SecureRandom;
 use ring::{
     digest::{digest, SHA256},
     rand::SystemRandom,
@@ -61,9 +62,11 @@ use std::{
     thread::sleep,
     time::Duration,
 };
-use veracruz_utils::csr::{convert_csr_to_cert, COMPUTE_ENCLAVE_CERT_TEMPLATE};
-use veracruz_utils::platform::linux::{
-    receive_buffer, send_buffer, LinuxRootEnclaveMessage, LinuxRootEnclaveResponse,
+use veracruz_utils::{
+    csr::{convert_csr_to_cert, COMPUTE_ENCLAVE_CERT_TEMPLATE},
+    platform::linux::{
+        receive_buffer, send_buffer, LinuxRootEnclaveMessage, LinuxRootEnclaveResponse,
+    },
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -305,6 +308,60 @@ fn get_firmware_version() -> String {
     String::from(env!("CARGO_PKG_VERSION"))
 }
 
+/// Produces a fresh 16-byte challenge value, indexed by a new challenge ID, and
+/// stashes them in the `CHALLENGE_ID` table before returning them.
+fn start_proxy_attestation() -> Result<(Vec<u8>, u32), LinuxRootEnclaveError> {
+    let challenge_id = CHALLENGE_ID.fetch_add(1, Ordering::SeqCst);
+
+    info!("Fresh challenge ID generated: {}. ", challenge_id);
+
+    let mut buffer = Vec::with_capacity(16);
+    let mut rng = SystemRandom::new();
+
+    rng.fill(&mut buffer).map_err(|e| {
+        error!("Failed to produced 16 bytes of random data for challenge.");
+
+        LinuxRootEnclaveError::CryptographyError
+    })?;
+
+    let mut challenge_hash_lock = CHALLENGE_HASHES.lock().map_err(|e| {
+        error!(
+            "Failed to obtain lock on CHALLENGE_HASHES.  Error produced: {}.",
+            e
+        );
+
+        LinuxRootEnclaveError::LockingError
+    })?;
+
+    challenge_hash_lock.insert(challenge_id.clone(), buffer.clone());
+
+    info!("Fresh challenge and challenge ID generated.");
+
+    Ok((buffer, challenge_id))
+}
+
+/// Caches the root enclave certificate and the root CA certificate for use
+/// later in the attestation process.
+fn install_certificate_chain(
+    root_enclave_certificate: Vec<u8>,
+    root_certificate: Vec<u8>,
+) -> Result<(), LinuxRootEnclaveResponse> {
+    let mut certificate_chain_lock = CERTIFICATE_CHAIN.lock().map_err(|e| {
+        error!(
+            "Failed to obtain lock on CERTIFICATE_CHAIN.  Error produced: {}.",
+            e
+        );
+
+        LinuxRootEnclaveError::LockingError
+    })?;
+
+    *certificate_chain_lock = Some((root_enclave_certificate, root_certificate));
+
+    info!("Certificate chain installed.");
+
+    Ok(())
+}
+
 /// Computes a native PSA attestation token from a challenge value, `challenge`,
 /// and the device ID.
 fn get_native_attestation_token(
@@ -368,13 +425,12 @@ fn get_native_attestation_token(
     Ok(token_buffer)
 }
 
-/// Computes a proxy PSA attestation token from a challenge value, `challenge`,
-/// an encoding of the enclave's certificate, `certificate`, and the name of the
-/// enclave, `enclave_name`.
-fn get_proxy_attestation_token(
+/// Computes a proxy attestation certificate chain from a Certificate Signing
+/// Request, `csr`, and a challenge index, `challenge_id`.
+fn get_proxy_attestation_certificate_chain(
     csr: Vec<u8>,
     challenge_id: u32,
-) -> Result<Vec<u8>, LinuxRootEnclaveError> {
+) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), LinuxRootEnclaveError> {
     let mut challenge_hashes_lock = CHALLENGE_HASHES.lock().map_err(|e| {
         error!("Failed to lock CHALLENGE_HASHES.  Error produced: {}.", e);
 
@@ -424,15 +480,15 @@ fn get_proxy_attestation_token(
             },
         )?;
 
-    let mut runtime_manager_certificate = convert_csr_to_cert(&csr, &COMPUTE_ENCLAVE_CERT_TEMPLATE, &runtime_manager_hash, private_key).map_err(|e| {
-        error!("Failed to convert Certificate Signing Request (CSR) into certificate.  Error produced: {}.", e);
+    let mut runtime_manager_certificate = convert_csr_to_cert(&csr, &COMPUTE_ENCLAVE_CERT_TEMPLATE, &runtime_manager_hash, &private_key).map_err(|e| {
+        error!("Failed to convert Certificate Signing Request (CSR) into certificate.  Error produced: {:?}.", e);
 
         LinuxRootEnclaveError::CryptographyError
     })?;
 
     info!("Runtime Manager certificate generated.");
 
-    let (mut root_enclave_certificate, mut root_certificate) =
+    let (root_enclave_certificate, root_certificate) =
         match CERTIFICATE_CHAIN.lock().map_err(|e| {
             error!(
                 "Failed to obtain lock on CERTIFICATE_CHAIN.  Error produced: {}.",
@@ -452,6 +508,12 @@ fn get_proxy_attestation_token(
         };
 
     info!("Obtained Root Enclave certificate and Root certificate.");
+
+    Ok((
+        runtime_manager_certificate,
+        root_enclave_certificate,
+        root_certificate,
+    ))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -592,10 +654,35 @@ fn entry_point() -> Result<(), LinuxRootEnclaveError> {
                 ))
             }
             LinuxRootEnclaveMessage::GetProxyAttestation(csr, challenge_id) => {
-                info!("Computing a proxy attestation token.");
+                info!("Computing a proxy attestation certificate chain.");
 
-                Ok(LinuxRootEnclaveResponse::ProxyAttestationToken(
-                    get_proxy_attestation_token(challenge, challenge_id)?,
+                let (runtime_manager_certificate, root_enclave_certificate, root_certificate) =
+                    get_proxy_attestation_certificate_chain(csr, challenge_id)?;
+
+                Ok(LinuxRootEnclaveResponse::CertificateChain(
+                    runtime_manager_certificate,
+                    root_enclave_certificate,
+                    root_certificate,
+                ))
+            }
+            LinuxRootEnclaveMessage::SetCertificateChain(
+                root_enclave_certificate,
+                root_certificate,
+            ) => {
+                info!("Installing certificate chain.");
+
+                install_certificate_chain(root_enclave_certificate, root_certificate)?;
+
+                Ok(LinuxRootEnclaveResponse::CertificateChainInstalled)
+            }
+            LinuxRootEnclaveMessage::StartProxyAttestation => {
+                info!("Generating challenge value and fresh challenge ID.");
+
+                let (challenge, challenge_id) = start_proxy_attestation()?;
+
+                Ok(LinuxRootEnclaveResponse::ChallengeGenerated(
+                    challenge,
+                    challenge_id,
                 ))
             }
         }?;

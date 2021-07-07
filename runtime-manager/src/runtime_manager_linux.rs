@@ -14,7 +14,10 @@ use clap::{App, Arg};
 use log::{error, info};
 use std::net::TcpListener;
 
-use veracruz_utils::platform::{linux::{receive_buffer, send_buffer}, vm::{RuntimeManagerMessage, VMStatus}};
+use veracruz_utils::platform::{
+    linux::{receive_buffer, send_buffer},
+    vm::{RuntimeManagerMessage, VMStatus},
+};
 
 use crate::managers::{session_manager, RuntimeManagerError};
 
@@ -26,12 +29,25 @@ use crate::managers::{session_manager, RuntimeManagerError};
 const INCOMING_ADDRESS: &'static str = "0.0.0.0";
 
 ////////////////////////////////////////////////////////////////////////////////
-// PSA attestation.
+// Initialization.
 ////////////////////////////////////////////////////////////////////////////////
 
-#[inline]
-fn psa_attestation_token(challenge: &[u8]) -> Result<RuntimeManagerMessage, RuntimeManagerError> {
-    Ok(RuntimeManagerMessage::PSAAttestationToken(vec![1, 2, 3], vec![3, 4, 5], 0))
+/// Initializes the runtime manager, bringing up a new session manager instance
+/// with the `policy_json` encoding of the policy file, and generating an
+/// attestation token from the `challenge` and `challenge_id` parameters.
+fn initialize(policy_json: String, challenge: Vec<u8>, challenge_id: i32) -> RuntimeManagerMessage {
+    if let Err(e) = session_manager::init_session_manager(&policy_json) {
+        error!(
+            "Failed to initialize session manager.  Error produced: {:?}.",
+            e
+        );
+
+        return RuntimeManagerMessage::Status(VMStatus::Fail);
+    }
+
+    info!("Session manager initialized with policy.");
+
+    unimplemented!()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -48,13 +64,14 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
         .author("The Veracruz Development Team")
         .arg(
             Arg::with_name("port")
-             .short("p")
-             .long("port")
-             .takes_value(true)
-             .required(true)
-             .help("Port to listen for new connections on.")
-             .value_name("PORT")
-        ).get_matches();
+                .short("p")
+                .long("port")
+                .takes_value(true)
+                .required(true)
+                .help("Port to listen for new connections on.")
+                .value_name("PORT"),
+        )
+        .get_matches();
 
     let port = if let Some(port) = matches.value_of("port") {
         info!("Received {} as port to listen on.", port);
@@ -108,19 +125,10 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
         info!("Received message: {:?}.", received_message);
 
         let return_message = match received_message {
-            RuntimeManagerMessage::Initialize(policy_json) => {
+            RuntimeManagerMessage::Initialize(policy_json, challenge, challenge_id) => {
                 info!("Initializing enclave.");
 
-                session_manager::init_session_manager(&policy_json).map_err(|serr| {
-                    error!(
-                        "Failed to initialize session manager.  Error produced: {}.",
-                    serr);
-
-                    serr
-
-                })?;
-
-                RuntimeManagerMessage::Status(VMStatus::Success)
+                initialize(policy_json, challenge, challenge_id)
             }
             RuntimeManagerMessage::NewTLSSession => {
                 info!("Initiating new TLS session.");
@@ -142,29 +150,6 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
                     .map(|_e| RuntimeManagerMessage::Status(VMStatus::Success))
                     .unwrap_or_else(|e| {
                         error!("Failed to close TLS session.  Error produced: {:?}.", e);
-                        RuntimeManagerMessage::Status(VMStatus::Fail)
-                    })
-            }
-            RuntimeManagerMessage::GetEnclaveName => {
-                info!("Retrieving enclave name.");
-
-                session_manager::get_enclave_name()
-                    .map(|name| RuntimeManagerMessage::EnclaveName(name))
-                    .unwrap_or_else(|e| {
-                        error!("Could not retrieve enclave name.  Error produced: {:?}.", e);
-                        RuntimeManagerMessage::Status(VMStatus::Fail)
-                    })
-            }
-            RuntimeManagerMessage::GetEnclaveCert => {
-                info!("Retrieving enclave certificate.");
-
-                session_manager::get_enclave_cert_pem()
-                    .map(|cert| RuntimeManagerMessage::EnclaveCert(cert))
-                    .unwrap_or_else(|e| {
-                        error!(
-                            "Could not retrieve enclave certificate.  Error produced: {:?}.",
-                            e
-                        );
                         RuntimeManagerMessage::Status(VMStatus::Fail)
                     })
             }
@@ -198,12 +183,6 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
                         RuntimeManagerMessage::Status(VMStatus::Fail)
                     })
             }
-            RuntimeManagerMessage::GetPSAAttestationToken(challenge) => {
-                info!("Obtaining PSA attestation token, with challenge: {:?}.", challenge);
-
-                psa_attestation_token(&challenge)?
-
-            },
             RuntimeManagerMessage::ResetEnclave => {
                 info!("Shutting down enclave.");
 

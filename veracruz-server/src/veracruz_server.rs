@@ -19,6 +19,7 @@ use log::debug;
 use std::io::Read;
 #[cfg(feature = "nitro")]
 use veracruz_utils::nitro_enclave::NitroError;
+#[cfg(feature = "linux")]
 use veracruz_utils::platform::linux::LinuxRootEnclaveResponse;
 
 pub type VeracruzServerResponder = Result<String, VeracruzServerError>;

@@ -306,15 +306,6 @@ mod tests {
         task::sleep(std::time::Duration::from_millis(5000)).await;
         let server_handle = server_tls_loop(LINEAR_REGRESSION_PARALLEL_POLICY);
 
-        #[cfg(feature = "sgx")]
-        let target_platform = Platform::SGX;
-        #[cfg(feature = "tz")]
-        let target_platform = Platform::TrustZone;
-        #[cfg(feature = "nitro")]
-        let target_platform = Platform::Nitro;
-        #[cfg(feature = "linux")]
-        let target_platform = Platform::Linux;
-
         let program_provider_handle = async {
             task::sleep(std::time::Duration::from_millis(10000)).await;
             info!("### program provider start.");
@@ -392,16 +383,7 @@ mod tests {
             info!("### Step 2. Set up all client sessions.");
             let mut clients = Vec::new();
             for (cert, key) in client_configs.iter() {
-                #[cfg(feature = "sgx")]
-                let target_platform = Platform::SGX;
-                #[cfg(feature = "tz")]
-                let target_platform = Platform::TrustZone;
-                #[cfg(feature = "nitro")]
-                let target_platform = Platform::Nitro;
-                #[cfg(feature = "linux")]
-                let target_platform = Platform::Linux;
-
-                clients.push(veracruz_client::VeracruzClient::new(cert, key, &policy_json, &target_platform)?);
+                clients.push(veracruz_client::VeracruzClient::new(cert, key, &policy_json)?);
             }
 
             info!(

@@ -218,14 +218,6 @@ mod tests {
         });
     }
 
-    /// Auxiliary function: self signed certificate for enclave
-    fn enclave_self_signed_cert(
-        veracruz_server: &mut VeracruzServerEnclave,
-    ) -> Result<rustls::Certificate, VeracruzServerError> {
-        let enclave_cert_vec = veracruz_server.get_enclave_cert()?;
-        Ok(rustls::Certificate(enclave_cert_vec))
-    }
-
     #[test]
     /// Load the Veracruz server and generate the self-signed certificate
     fn test_phase1_enclave_self_signed_cert() {
@@ -248,24 +240,7 @@ mod tests {
 
         let ret = VeracruzServerEnclave::new(&policy_json);
 
-        let mut veracruz_server = ret.unwrap();
-
-        #[cfg(feature = "linux")]
-        let test_target_platform: Platform = Platform::Linux;
-        #[cfg(feature = "nitro")]
-        let test_target_platform: Platform = Platform::Nitro;
-        #[cfg(feature = "sgx")]
-        let test_target_platform: Platform = Platform::SGX;
-        #[cfg(feature = "tz")]
-        let test_target_platform: Platform = Platform::TrustZone;
-
-        let runtime_manager_hash = policy.runtime_manager_hash(&test_target_platform).unwrap();
-        let enclave_cert_hash_ret = attestation_flow(
-            &policy.proxy_attestation_server_url(),
-            &runtime_manager_hash,
-            &mut veracruz_server,
-        );
-        assert!(enclave_cert_hash_ret.is_ok())
+        let _veracruz_server = ret.unwrap();
     }
 
     // XXX: works

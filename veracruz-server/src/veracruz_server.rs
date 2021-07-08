@@ -231,9 +231,9 @@ pub trait VeracruzServer {
     where
         Self: Sized;
 
-    fn plaintext_data(&self, data: Vec<u8>) -> Result<Option<Vec<u8>>, VeracruzServerError>;
+    fn plaintext_data(&mut self, data: Vec<u8>) -> Result<Option<Vec<u8>>, VeracruzServerError>;
 
-    fn new_tls_session(&self) -> Result<u32, VeracruzServerError>;
+    fn new_tls_session(&mut self) -> Result<u32, VeracruzServerError>;
 
     fn close_tls_session(&mut self, session_id: u32) -> Result<(), VeracruzServerError>;
 

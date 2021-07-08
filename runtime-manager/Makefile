@@ -12,7 +12,7 @@
 OUT_DIR?=.
 FINAL_DIR?=.
 
-.PHONY: all linux-aarch64 linux-x64 sgx trustzone clean deprecated nitro
+.PHONY: all linux-aarch64 linux-x86_64 sgx trustzone clean deprecated nitro
 
 all: deprecated
 
@@ -139,6 +139,12 @@ css-tz.bin: $(FINAL_DIR)/$(TZ_UUID).ta
 css-nitro.bin: PCR0
 	cp $< $@
 
+css-linux-x86_64.bin: target/x86_64-unknown-linux-gnu/release/runtime_manager_enclave
+	cp $< $@
+
+css-linux-aarch64.bin: target/aarch64-unknown-linux-gnu/release/runtime_manager_enclave
+	cp $< $@
+
 $(FINAL_DIR)/$(TZ_UUID).ta: $(OUT_DIR)/$(TZ_UUID).ta
 	cp $< $@
 
@@ -171,14 +177,20 @@ target/x86_64-unknown-linux-musl/release/runtime_manager_enclave: Cargo.toml $(N
 ####### Linux (AArch64 and X64) processes  #########
 Linux_Src = $(COMMON_Src) src/runtime_manager_linux.rs src/main.rs
 
-linux: Cargo.toml $(Linux_Src)
+target/x86_64-unknown-linux-gnu/release/runtime_manager_enclave: Cargo.toml $(Linux_Src)
 	cargo build --release --features linux
 
-linux-x64: Cargo.toml $(Linux_Src)
+target/x86_64-unknown-linux-gnu/release/runtime_manager_enclave: Cargo.toml $(Linux_Src)
 	cargo build --target x86_64-unknown-linux-gnu --release --features linux
 
-linux-aarch64: Cargo.toml $(Linux_Src)
+target/aarch64-unknown-linux-gnu/release/runtime_manager_enclave: Cargo.toml $(Linux_Src)
 	cargo build --target aarch64-unknown-linux-gnu --release --features linux
+
+linux: target/x86_64-unknown-linux-gnu/release/runtime_manager_enclave
+
+linux-x86_64: target/x86_64-unknown-linux-gnu/release/runtime_manager_enclave
+
+linux-aarch64: target/aarch64-unknown-linux-gnu/release/runtime_manager_enclave
 
 clean:
 	@cargo clean

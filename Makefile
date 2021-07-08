@@ -9,7 +9,7 @@
 # See the `LICENSE_MIT.markdown` file in the Veracruz root directory for licensing
 # and copyright information.
  
-.PHONY: all sdk sgx-veracruz-client-test trustzone-veracruz-client-test nitro-veracruz-client-test sgx trustzone linux linux-x64 linux-aarch64 sgx-veracruz-server-test sgx-veracruz-server-performance sgx-veracruz-test sgx-psa-attestation tz-psa-attestation trustzone-veracruz-server-test-setting trustzone-veracruz-test-setting trustzone-env sgx-env trustzone-test-env clean clean-cargo-lock fmt linux-veracruz-server-test linux-veracruz-server-test-dry-run
+.PHONY: all sdk sgx-test-collateral tz-test-collateral nitro-test-collateral linux-x86_64-test-collateral linux-aarch64-test-collateral sgx-veracruz-client-test trustzone-veracruz-client-test nitro-veracruz-client-test sgx trustzone linux linux-x64 linux-aarch64 sgx-veracruz-server-test sgx-veracruz-server-performance sgx-veracruz-test sgx-psa-attestation tz-psa-attestation trustzone-veracruz-server-test-setting trustzone-veracruz-test-setting trustzone-env sgx-env trustzone-test-env clean clean-cargo-lock fmt linux-veracruz-server-test linux-veracruz-server-test-dry-run
  
 WARNING_COLOR := "\e[1;33m"
 INFO_COLOR := "\e[1;32m"
@@ -36,6 +36,12 @@ sgx-test-collateral:
 
 trustzone-test-collateral:
 	TEE=tz $(MAKE) -C test-collateral
+
+linux-x86_64-test-collateral:
+	TEE=linux-x86_64 $(MAKE) -C test-collateral
+
+linux-aarch64-test-collateral:
+	TEE=linux-aarch64 $(MAKE) -C test-collateral
 
 # Test veracruz-client for sgx, due to the use of a mocked server with a fixed port, these tests must run in a single thread
 sgx-veracruz-client-test: sgx sgx-test-collateral 
@@ -154,11 +160,11 @@ nitro-veracruz-server-test: nitro nitro-test-collateral veracruz-server-test/pro
 	cd ./veracruz-server-test \
 		&& ./nitro-ec2-terminate_root.sh
 
-linux-veracruz-server-test-dry-run: linux test_cases
+linux-veracruz-server-test-dry-run: linux linux-x86_64-test-collateral
 	cd veracruz-server-test \
 		&& RUSTFLAGS=$(LINUX_RUST_FLAG) cargo test --features linux --no-run -- --nocapture
 
-linux-veracruz-server-test: linux test_cases
+linux-veracruz-server-test: linux linux-x86_64-test-collateral
 	cd veracruz-server-test \
 		&& RUSTFLAGS=$(LINUX_RUST_FLAG) cargo test --features linux -- --test-threads=1 --nocapture \
 		&& RUSTFLAGS=$(LINUX_RUST_FLAG) cargo test test_debug --features linux  -- --ignored --test-threads=1

@@ -10,7 +10,10 @@
 //! information on licensing and copyright.
 
 use crate::managers::{
-    session_manager::{generate_csr, init_session_manager},
+    session_manager::{
+	close_session, get_data, get_data_needed,
+	init_session_manager, new_session, send_data
+    },
     RuntimeManagerError,
 };
 use bincode::{deserialize, serialize};
@@ -129,12 +132,12 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
             RuntimeManagerMessage::Initialize(policy_json, _challenge, _challenge_id) => {
                 info!("Initializing enclave.");
 
-                initialize(policy_json, challenge, challenge_id)
+                initialize(policy_json, _challenge, _challenge_id)
             }
             RuntimeManagerMessage::NewTLSSession => {
                 info!("Initiating new TLS session.");
 
-                session_manager::new_session()
+                new_session()
                     .map(|session_id| RuntimeManagerMessage::TLSSession(session_id))
                     .unwrap_or_else(|e| {
                         error!(
@@ -147,7 +150,7 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
             RuntimeManagerMessage::CloseTLSSession(session_id) => {
                 info!("Closing TLS session.");
 
-                session_manager::close_session(session_id)
+                close_session(session_id)
                     .map(|_e| RuntimeManagerMessage::Status(VMStatus::Success))
                     .unwrap_or_else(|e| {
                         error!("Failed to close TLS session.  Error produced: {:?}.", e);
@@ -157,7 +160,7 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
             RuntimeManagerMessage::GetTLSDataNeeded(session_id) => {
                 info!("Checking whether TLS data is needed.");
 
-                session_manager::get_data_needed(session_id)
+                get_data_needed(session_id)
                     .map(|needed| RuntimeManagerMessage::TLSDataNeeded(needed))
                     .unwrap_or_else(|e|{
                         error!("Failed to check whether further TLS data needed.  Error produced: {:?}.", e);
@@ -167,7 +170,7 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
             RuntimeManagerMessage::GetTLSData(session_id) => {
                 info!("Retrieving TLS data.");
 
-                session_manager::get_data(session_id)
+                get_data(session_id)
                     .map(|(active, data)| RuntimeManagerMessage::TLSData(data, active))
                     .unwrap_or_else(|e| {
                         error!("Failed to retrieve TLS data.  Error produced: {:?}.", e);
@@ -177,7 +180,7 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
             RuntimeManagerMessage::SendTLSData(session_id, tls_data) => {
                 info!("Sending TLS data.");
 
-                session_manager::send_data(session_id, &tls_data)
+                send_data(session_id, &tls_data)
                     .map(|_| RuntimeManagerMessage::Status(VMStatus::Success))
                     .unwrap_or_else(|e| {
                         error!("Failed to send TLS data.  Error produced: {:?}.", e);

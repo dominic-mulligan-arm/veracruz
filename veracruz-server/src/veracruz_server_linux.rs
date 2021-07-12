@@ -30,7 +30,6 @@ pub mod veracruz_server_linux {
         },
         policy::policy::Policy,
     };
-    use crate::VeracruzServerError::VeracruzSocketError;
 
     ////////////////////////////////////////////////////////////////////////////
     // Constants.
@@ -390,7 +389,7 @@ pub mod veracruz_server_linux {
                     ));
                 };
 
-            info!("Requesting proxy attestation start.")
+            info!("Requesting proxy attestation start.");
 
             let proxy_attestation = serialize(&LinuxRootEnclaveMessage::StartProxyAttestation).map_err(|e| {
                 error!("Failed to serialize proxy attestation initialization request.  Error produced: {}.", e);
@@ -398,7 +397,7 @@ pub mod veracruz_server_linux {
                 VeracruzServerError::BincodeError(*e)
             })?;
 
-            send_buffer(&proxy_attestation).map_err(|e| {
+            send_buffer(&mut linux_root_socket, &proxy_attestation).map_err(|e| {
                 error!("Failed to transmit proxy attestation initialization request.  Error produced: {}.", e);
 
                 VeracruzServerError::IOError(e)
@@ -506,47 +505,13 @@ pub mod veracruz_server_linux {
             };
         }
 
-        fn plaintext_data(
-            &mut self,
-            data: Vec<u8>,
-        ) -> Result<Option<Vec<u8>>, VeracruzServerError> {
-            info!("Sending {} bytes of plaintext data to enclave.", data.len());
-
-            let parsed = transport_protocol::parse_runtime_manager_request(&data)?;
-
-            if parsed.has_request_proxy_psa_attestation_token() {
-                info!("Sending proxy PSA attestation token request.");
-
-                let rpat = parsed.get_request_proxy_psa_attestation_token();
-                let challenge = transport_protocol::parse_request_proxy_psa_attestation_token(rpat);
-
-                let (psa_attestation_token, pubkey, device_id) =
-                    self.proxy_psa_attestation_get_token(challenge).map_err(|e| {
-                        error!("Failed to retrieve PSA proxy attestation token.  Error produced: {:?}.", e);
-                        e
-                    })?;
-
-                let serialized_pat = transport_protocol::serialize_proxy_psa_attestation_token(
-                    &psa_attestation_token,
-                    &pubkey,
-                    device_id,
-                )
-                .map_err(|e| {
-                    error!(
-                        "Failed to serialize PSA proxy attestation token.  Error produced: {:?}.",
-                        e
-                    );
-                    VeracruzServerError::TransportProtocolError(e)
-                })?;
-
-                info!("Proxy PSA attestation token retrieved.");
-
-                Ok(Some(serialized_pat))
-            } else {
-                error!("Unexpected protocol buffer message received.");
-                Err(VeracruzServerError::InvalidProtoBufMessage)
-            }
-        }
+	#[inline]
+	fn plaintext_data(
+		&mut self,
+		_data: Vec<u8>
+	) -> Result<Option<Vec<u8>>, VeracruzServerError> {
+		return Err(VeracruzServerError::UnimplementedError);
+	}
 
         fn new_tls_session(&mut self) -> Result<u32, VeracruzServerError> {
             info!("Requesting new TLS session.");

@@ -427,7 +427,7 @@ fn get_native_attestation_token(
 /// Request, `csr`, and a challenge index, `challenge_id`.
 fn get_proxy_attestation_certificate_chain(
     csr: Vec<u8>,
-    challenge_id: u32,
+    challenge_id: i32,
 ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), LinuxRootEnclaveError> {
     let mut challenge_hashes_lock = CHALLENGE_HASHES.lock().map_err(|e| {
         error!("Failed to lock CHALLENGE_HASHES.  Error produced: {}.", e);

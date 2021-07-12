@@ -56,7 +56,7 @@ pub enum LinuxRootEnclaveMessage {
     /// The fields of the message are (in order):
     /// - A certificate signing request (CSR),
     /// - A challenge ID.
-    GetProxyAttestation(Vec<u8>, u32),
+    GetProxyAttestation(Vec<u8>, i32),
     /// A request to set the Linux root enclave's certificate chain, installing
     /// a root enclave and a root certificate to be used as part of the
     /// attestation process.  Fields in order are:

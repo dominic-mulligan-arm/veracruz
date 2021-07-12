@@ -98,7 +98,7 @@ pub enum LinuxRootEnclaveResponse {
     EnclaveSpawned(u32),
     /// Reply with the content and the index of the freshly-generated challenge
     /// value produced as a result of the proxy attestation process starting.
-    ChallengeGenerated(Vec<u8>, u32),
+    ChallengeGenerated(Vec<u8>, i32),
 }
 
 ////////////////////////////////////////////////////////////////////////////////

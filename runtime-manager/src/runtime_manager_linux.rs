@@ -9,17 +9,18 @@
 //! See the `LICENSE.markdown` file in the Veracruz root directory for
 //! information on licensing and copyright.
 
+use crate::managers::{
+    session_manager::{generate_csr, init_session_manager},
+    RuntimeManagerError,
+};
 use bincode::{deserialize, serialize};
 use clap::{App, Arg};
 use log::{error, info};
 use std::net::TcpListener;
-
 use veracruz_utils::platform::{
     linux::{receive_buffer, send_buffer},
     vm::{RuntimeManagerMessage, VMStatus},
 };
-
-use crate::managers::{session_manager, RuntimeManagerError};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Constants.
@@ -36,7 +37,7 @@ const INCOMING_ADDRESS: &'static str = "0.0.0.0";
 /// with the `policy_json` encoding of the policy file, and generating an
 /// attestation token from the `challenge` and `challenge_id` parameters.
 fn initialize(policy_json: String, challenge: Vec<u8>, challenge_id: i32) -> RuntimeManagerMessage {
-    if let Err(e) = session_manager::init_session_manager(&policy_json) {
+    if let Err(e) = init_session_manager(&policy_json) {
         error!(
             "Failed to initialize session manager.  Error produced: {:?}.",
             e
@@ -47,7 +48,7 @@ fn initialize(policy_json: String, challenge: Vec<u8>, challenge_id: i32) -> Run
 
     info!("Session manager initialized with policy.");
 
-    unimplemented!()
+    RuntimeManagerMessage::Status(VMStatus::Success)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -125,7 +126,7 @@ pub fn linux_main() -> Result<(), RuntimeManagerError> {
         info!("Received message: {:?}.", received_message);
 
         let return_message = match received_message {
-            RuntimeManagerMessage::Initialize(policy_json, challenge, challenge_id) => {
+            RuntimeManagerMessage::Initialize(policy_json, _challenge, _challenge_id) => {
                 info!("Initializing enclave.");
 
                 initialize(policy_json, challenge, challenge_id)

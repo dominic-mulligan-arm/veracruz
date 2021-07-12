@@ -54,7 +54,7 @@ use std::{
     path::Path,
     process::{Child, Command},
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicI32, AtomicU32, Ordering},
         Mutex,
     },
     thread::sleep,
@@ -106,12 +106,12 @@ lazy_static! {
     static ref LAUNCHED_ENCLAVES: Mutex<Vec<Child>> = Mutex::new(Vec::new());
     /// A monotonically-increasing counter to keep track of which challenge IDs
     /// were sent to which compute enclaves.
-    static ref CHALLENGE_ID: AtomicU32 = AtomicU32::new(0);
+    static ref CHALLENGE_ID: AtomicI32 = AtomicI32::new(0);
     /// Mutex to hold the certificate chain provided by the Proxy Attestation
     /// Service after a successful native attestation.
     static ref CERTIFICATE_CHAIN: Mutex<Option<(Vec<u8>, Vec<u8>)>> = Mutex::new(None);
     /// A hash map for storing challenge values associated with their IDs.
-    static ref CHALLENGE_HASHES: Mutex<HashMap<u32, Vec<u8>>> =
+    static ref CHALLENGE_HASHES: Mutex<HashMap<i32, Vec<u8>>> =
         Mutex::new(HashMap::new());
     /// The next port to use to communicate with a newly-launched compute
     /// enclave.
@@ -308,7 +308,7 @@ fn get_firmware_version() -> String {
 
 /// Produces a fresh 16-byte challenge value, indexed by a new challenge ID, and
 /// stashes them in the `CHALLENGE_ID` table before returning them.
-fn start_proxy_attestation() -> Result<(Vec<u8>, u32), LinuxRootEnclaveError> {
+fn start_proxy_attestation() -> Result<(Vec<u8>, i32), LinuxRootEnclaveError> {
     let challenge_id = CHALLENGE_ID.fetch_add(1, Ordering::SeqCst);
 
     info!("Fresh challenge ID generated: {}. ", challenge_id);
@@ -435,13 +435,11 @@ fn get_proxy_attestation_certificate_chain(
         LinuxRootEnclaveError::LockingError
     })?;
 
-    let _challenge = challenge_hashes_lock
-        .remove(&challenge_id)
-        .ok_or_else(|| {
-            error!("Unknown challenge ID: {}.", challenge_id);
+    let _challenge = challenge_hashes_lock.remove(&challenge_id).ok_or_else(|| {
+        error!("Unknown challenge ID: {}.", challenge_id);
 
-            LinuxRootEnclaveError::AttestationError
-        })?;
+        LinuxRootEnclaveError::AttestationError
+    })?;
 
     info!("Challenge ID {} found.", challenge_id);
 
@@ -487,25 +485,24 @@ fn get_proxy_attestation_certificate_chain(
     info!("Runtime Manager certificate generated.");
 
     let certificate_chain_lock = CERTIFICATE_CHAIN.lock().map_err(|e| {
-            error!(
-                "Failed to obtain lock on CERTIFICATE_CHAIN.  Error produced: {}.",
-                e
-            );
+        error!(
+            "Failed to obtain lock on CERTIFICATE_CHAIN.  Error produced: {}.",
+            e
+        );
 
-            LinuxRootEnclaveError::LockingError
-        })?;
-    
-    let (root_enclave_certificate, root_certificate) =
-        match &*certificate_chain_lock {
-            Some((root_enclave_certificate, root_certificate)) => {
-                (root_enclave_certificate.clone(), root_certificate.clone())
-            }
-            None => {
-                error!("Root Enclave and Root certificates not stored.");
+        LinuxRootEnclaveError::LockingError
+    })?;
 
-                return Err(LinuxRootEnclaveError::InvariantFailed);
-            }
-        };
+    let (root_enclave_certificate, root_certificate) = match &*certificate_chain_lock {
+        Some((root_enclave_certificate, root_certificate)) => {
+            (root_enclave_certificate.clone(), root_certificate.clone())
+        }
+        None => {
+            error!("Root Enclave and Root certificates not stored.");
+
+            return Err(LinuxRootEnclaveError::InvariantFailed);
+        }
+    };
 
     info!("Obtained Root Enclave certificate and Root certificate.");
 

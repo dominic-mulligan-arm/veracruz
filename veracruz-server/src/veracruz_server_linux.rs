@@ -30,6 +30,7 @@ pub mod veracruz_server_linux {
         },
         policy::policy::Policy,
     };
+    use crate::VeracruzServerError::VeracruzSocketError;
 
     ////////////////////////////////////////////////////////////////////////////
     // Constants.
@@ -389,6 +390,41 @@ pub mod veracruz_server_linux {
                     ));
                 };
 
+            info!("Requesting proxy attestation start.")
+
+            let proxy_attestation = serialize(&LinuxRootEnclaveMessage::StartProxyAttestation).map_err(|e| {
+                error!("Failed to serialize proxy attestation initialization request.  Error produced: {}.", e);
+
+                VeracruzServerError::BincodeError(*e)
+            })?;
+
+            send_buffer(&proxy_attestation).map_err(|e| {
+                error!("Failed to transmit proxy attestation initialization request.  Error produced: {}.", e);
+
+                VeracruzServerError::IOError(e)
+            })?;
+
+            let response_buffer = receive_buffer(&mut linux_root_socket).map_err(|e| {
+                error!("Failed to receive response to proxy attestation initialization request.  Error produced: {}.", e);
+
+                VeracruzServerError::IOError(e)
+            })?;
+
+            let response = deserialize(&response_buffer).map_err(|e| {
+                error!("Failed to deserialize response to proxy attestation initialization request.  Error produced: {}.", e);
+
+                VeracruzServerError::BincodeError(*e)
+            })?;
+
+            let (challenge,challenge_id) = match response {
+                LinuxRootEnclaveResponse::ChallengeGenerated(challenge, challenge_id) => (challenge, challenge_id),
+                otherwise => {
+                    error!("Unexpected response received from Linux Root enclave.  Received: {:?}.", otherwise);
+
+                    return Err(VeracruzServerError::LinuxRootEnclaveUnexpectedResponse(otherwise));
+                }
+            };
+
             let runtime_manager_address = format!(
                 "{}:{}",
                 RUNTIME_MANAGER_ENCLAVE_ADDRESS, runtime_manager_port
@@ -414,6 +450,8 @@ pub mod veracruz_server_linux {
 
             let initialize_message = serialize(&RuntimeManagerMessage::Initialize(
                 policy.to_string(),
+                challenge,
+                challenge_id
             ))
             .map_err(|e| {
                 error!(

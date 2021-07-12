@@ -80,7 +80,7 @@ const INCOMING_PORT: &'static str = "5021";
 const SOCKET_BACKLOG: i32 = 127;
 /// Path to the Runtime Manager binary.
 const RUNTIME_MANAGER_ENCLAVE_PATH: &'static str =
-    "../runtime-manager/target/release/runtime_manager_enclave";
+    "../runtime-manager/target/x86_64-unknown-linux-gnu/release/runtime_manager_enclave";
 /// Seconds to wait after spawning an enclave before proceeding.
 const ENCLAVE_SPAWN_DELAY: u64 = 2;
 

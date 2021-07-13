@@ -39,7 +39,13 @@ use crate::{
     fs::FileSystem,
     wasi::{common::ExecutionEngine, wasmi::WASMIRuntimeState},
 };
-use std::{boxed::Box, string::ToString};
+use std::{atomic::Arc, boxed::Box, string::ToString};
+
+#[cfg(feature = "sgx")]
+use std::sync::SgxMutex as Mutex;
+#[cfg(not(feature = "sgx"))]
+use std::sync::Mutex;
+
 use veracruz_utils::policy::principal::ExecutionStrategy;
 
 /// The top-level function executes program `program_name` on

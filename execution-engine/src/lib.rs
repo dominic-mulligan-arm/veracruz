@@ -39,7 +39,7 @@ use crate::{
     fs::FileSystem,
     wasi::{common::ExecutionEngine, wasmi::WASMIRuntimeState},
 };
-use std::{atomic::Arc, boxed::Box, string::ToString};
+use std::{boxed::Box, string::ToString, sync::Arc};
 
 #[cfg(feature = "sgx")]
 use std::sync::SgxMutex as Mutex;
